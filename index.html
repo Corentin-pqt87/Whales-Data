@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestionnaire de Fichiers par Tags</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style/style.css">
+</head>
+<body>
+    <header>
+        <div>
+            <h1>Gestionnaire de Fichiers par Tags</h1>
+            <p>Organisez et retrouvez facilement vos fichiers grâce au système de tags</p>
+        </div>
+        <div>
+            <button class="btn btn-primary" id="viewStatsBtn">
+                <i class="fas fa-chart-bar"></i> Statistiques
+            </button>
+            <button class="btn btn-secondary" id="saveDataBtn">
+                <i class="fas fa-save"></i> Sauvegarder
+            </button>
+            <button class="btn btn-secondary" id="loadDataBtn">
+                <i class="fas fa-folder-open"></i> Charger
+            </button>
+        </div>
+    </header>
+    
+    <div class="container">
+        <aside class="panel">
+            <div class="search-section">
+                <h2>Recherche</h2>
+                <input type="text" class="search-input" id="searchInput" placeholder="Ex: (image OR vidéo) #drole">
+                <button class="btn btn-primary" id="searchBtn">Rechercher</button>
+                
+                <div class="preview-option">
+                    <label>
+                        <input type="checkbox" id="previewCheckbox">
+                        Afficher les prévisualisations
+                    </label>
+                </div>
+                
+                <div class="search-examples">
+                    <p>Exemples de recherche :</p>
+                    <ul>
+                        <li><code>image #vacances</code> - Images avec tag #vacances</li>
+                        <li><code>(doc OR pdf) #travail</code> - Documents ou PDFs avec tag #travail</li>
+                        <li><code>#montagne not(#plage)</code> - Fichiers avec #montagne mais sans #plage</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="tags-section">
+                <h3>Tags populaires</h3>
+                <div class="tags-cloud" id="tagsCloud">
+                    <!-- Les tags seront générés dynamiquement -->
+                </div>
+            </div>
+            
+            <div class="add-file-section">
+                <h3>Ajouter un fichier</h3>
+                <form id="addFileForm" class="add-file-form">
+                    <div class="form-group">
+                        <label class="form-label">Nom</label>
+                        <input type="text" class="form-input" id="fileName" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Description</label>
+                        <textarea class="form-input" id="fileDesc" rows="3"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Type</label>
+                        <select class="form-select" id="fileType">
+                            <option value="image">Image</option>
+                            <option value="video">Vidéo</option>
+                            <option value="document">Document</option>
+                            <option value="audio">Audio</option>
+                            <option value="lien">Lien Web</option>
+                            <option value="autre">Autre</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Emplacement (URL ou chemin)</label>
+                        <input type="text" class="form-input" id="fileLocation" placeholder="/chemins/vers/fichier.jpg ou https://..." required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Tags (séparés par des virgules)</label>
+                        <input type="text" class="form-input" id="fileTags" placeholder="Ex: vacances, montagne, été">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Ajouter le fichier</button>
+                </form>
+            </div>
+        </aside>
+        
+        <main class="panel">
+            <div class="results-header">
+                <h2>Résultats de recherche <span id="resultsCount"></span></h2>
+                <div class="sort-options">
+                    <label for="sortSelect">Trier par:</label>
+                    <select id="sortSelect" class="form-select">
+                        <option value="newest">Plus récent</option>
+                        <option value="oldest">Plus ancien</option>
+                        <option value="popular">Plus populaire</option>
+                        <option value="name">Nom (A-Z)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="results-section" id="resultsContainer">
+                <!-- Les résultats seront affichés ici par JavaScript -->
+            </div>
+            
+            <div class="help-section">
+                <h3>Aide à la recherche</h3>
+                <div class="help-item">
+                    <strong>AND implicite</strong> : Un espace entre deux termes signifie que les deux doivent être présents
+                </div>
+                <div class="help-item">
+                    <strong>OR</strong> : Pour élargir la recherche à plusieurs termes
+                </div>
+                <div class="help-item">
+                    <strong>NOT</strong> : Exclure un terme de la recherche (ex: not(#plage))
+                </div>
+                <div class="help-item">
+                    <strong>Groupement</strong> : Utilisez des parenthèses pour grouper des conditions
+                </div>
+                <div class="help-item">
+                    <strong>Tags</strong> : Préfixez avec # pour rechercher spécifiquement des tags
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Modal de visualisation -->
+    <div class="modal" id="fileModal">
+        <div class="modal-content">
+            <span class="close-modal" id="closeModal">&times;</span>
+            <h2 id="modalTitle">Visualisation du fichier</h2>
+            <div class="file-viewer" id="fileViewer">
+                <!-- Le contenu du fichier sera affiché ici -->
+            </div>
+            <div class="file-actions">
+                <button class="btn btn-primary" id="openExternal">
+                    <i class="fas fa-external-link-alt"></i> Ouvrir dans un nouvel onglet
+                </button>
+                <button class="btn btn-danger" id="closeViewer">
+                    <i class="fas fa-times"></i> Fermer
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de statistiques -->
+    <div class="modal" id="statsModal">
+        <div class="modal-content">
+            <span class="close-modal" id="closeStatsModal">&times;</span>
+            <h2>Statistiques</h2>
+            <div class="stats-container">
+                <div class="stat-card">
+                    <h3>Fichiers totaux</h3>
+                    <p id="totalFiles">0</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Tags utilisés</h3>
+                    <p id="totalTags">0</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Vues totales</h3>
+                    <p id="totalViews">0</p>
+                </div>
+            </div>
+            <div class="popular-section">
+                <h3>Fichiers les plus populaires</h3>
+                <div id="popularFiles">
+                    <!-- Les fichiers populaires seront affichés ici -->
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <footer>
+        <p>Application de gestion de fichiers par tags - Développée selon le cahier des charges</p>
+    </footer>
+
+    <script src="script/script.js"></script>
+</body>
+</html>
