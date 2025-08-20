@@ -195,6 +195,7 @@ h1, h2, h3 {
     background-color: var(--light-color);
     cursor: pointer;
     transition: background-color 0.3s;
+    position: relative;
 }
 
 .collection-item:hover {
@@ -210,6 +211,7 @@ h1, h2, h3 {
     display: flex;
     align-items: center;
     gap: 10px;
+    flex: 1;
 }
 
 .collection-color {
@@ -220,6 +222,7 @@ h1, h2, h3 {
 
 .collection-name {
     font-weight: 500;
+    flex: 1;
 }
 
 .collection-count {
@@ -231,6 +234,36 @@ h1, h2, h3 {
 
 .collection-item.active .collection-count {
     background-color: rgba(255, 255, 255, 0.3);
+}
+
+.collection-actions {
+    display: none;
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: white;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    z-index: 10;
+}
+
+.collection-item:hover .collection-actions {
+    display: flex;
+}
+
+.collection-action-btn {
+    padding: 5px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--dark-color);
+    border-radius: 4px;
+}
+
+.collection-action-btn:hover {
+    background-color: var(--light-color);
+    color: var(--primary-color);
 }
 
 .tags-cloud {
@@ -465,6 +498,12 @@ h1, h2, h3 {
     background-color: white;
 }
 
+.form-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
 .collections-select {
     display: flex;
     flex-wrap: wrap;
@@ -555,6 +594,12 @@ footer {
 
 .close-modal:hover {
     color: var(--accent-color);
+}
+
+.file-actions-modal {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
 }
 
 .file-viewer {
@@ -685,5 +730,9 @@ footer {
     .file-card.list-view .file-preview {
         width: 100%;
         height: 150px;
+    }
+    
+    .form-actions {
+        flex-direction: column;
     }
 }

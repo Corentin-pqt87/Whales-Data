@@ -5,6 +5,8 @@ let collections = [];
 let currentFile = null;
 let currentCollectionId = null;
 let isListView = false;
+let isEditingFile = false;
+let isEditingCollection = false;
 
 // Génération d'ID unique selon les spécifications
 function generateId(type) {
@@ -47,10 +49,11 @@ function isPreviewEnabled() {
     return document.getElementById('previewCheckbox').checked;
 }
 
-// Ajout d'un fichier
+// Ajout ou modification d'un fichier
 document.getElementById('addFileForm').addEventListener('submit', function(e) {
     e.preventDefault();
     
+    const id = document.getElementById('fileId').value;
     const name = document.getElementById('fileName').value;
     const description = document.getElementById('fileDesc').value;
     const type = document.getElementById('fileType').value;
@@ -64,75 +67,216 @@ document.getElementById('addFileForm').addEventListener('submit', function(e) {
         selectedCollections.push(checkbox.value);
     });
     
-    // Création de l'objet fichier
-    const id = generateId(type);
-    const file = {
-        id,
-        name,
-        description,
-        type,
-        location,
-        locationType,
-        collections: selectedCollections,
-        views: 0,
-        createdAt: new Date().toISOString()
-    };
-    
-    files.push(file);
-    
-    // Ajouter le fichier aux collections
-    selectedCollections.forEach(collectionId => {
-        const collection = collections.find(c => c.id === collectionId);
-        if (collection) {
-            if (!collection.files) collection.files = [];
-            collection.files.push(id);
-            collection.updatedAt = new Date().toISOString();
-        }
-    });
-    
-    // Gestion des tags
-    if (tagsInput) {
-        const tagList = tagsInput.split(',').map(tag => tag.trim());
-        
-        tagList.forEach(tagName => {
-            if (!tags[tagName]) {
-                tags[tagName] = [];
+    if (isEditingFile && id) {
+        // Modification d'un fichier existant
+        const fileIndex = files.findIndex(f => f.id === id);
+        if (fileIndex !== -1) {
+            // Retirer l'ancien fichier de ses collections
+            if (files[fileIndex].collections) {
+                files[fileIndex].collections.forEach(collectionId => {
+                    const collection = collections.find(c => c.id === collectionId);
+                    if (collection && collection.files) {
+                        const fileIndexInCollection = collection.files.indexOf(id);
+                        if (fileIndexInCollection !== -1) {
+                            collection.files.splice(fileIndexInCollection, 1);
+                        }
+                    }
+                });
             }
-            tags[tagName].push(id);
+            
+            // Mettre à jour le fichier
+            files[fileIndex] = {
+                ...files[fileIndex],
+                name,
+                description,
+                type,
+                location,
+                locationType,
+                collections: selectedCollections
+            };
+            
+            // Ajouter le fichier aux nouvelles collections
+            selectedCollections.forEach(collectionId => {
+                const collection = collections.find(c => c.id === collectionId);
+                if (collection) {
+                    if (!collection.files) collection.files = [];
+                    if (!collection.files.includes(id)) {
+                        collection.files.push(id);
+                    }
+                    collection.updatedAt = new Date().toISOString();
+                }
+            });
+            
+            // Mettre à jour les tags
+            updateFileTags(id, tagsInput);
+            
+            alert('Fichier modifié avec succès!');
+        }
+    } else {
+        // Création d'un nouveau fichier
+        const newId = generateId(type);
+        const file = {
+            id: newId,
+            name,
+            description,
+            type,
+            location,
+            locationType,
+            collections: selectedCollections,
+            views: 0,
+            createdAt: new Date().toISOString()
+        };
+        
+        files.push(file);
+        
+        // Ajouter le fichier aux collections
+        selectedCollections.forEach(collectionId => {
+            const collection = collections.find(c => c.id === collectionId);
+            if (collection) {
+                if (!collection.files) collection.files = [];
+                collection.files.push(newId);
+                collection.updatedAt = new Date().toISOString();
+            }
         });
+        
+        // Gestion des tags
+        if (tagsInput) {
+            const tagList = tagsInput.split(',').map(tag => tag.trim());
+            
+            tagList.forEach(tagName => {
+                if (tagName) { // Vérifier que le tag n'est pas vide
+                    if (!tags[tagName]) {
+                        tags[tagName] = [];
+                    }
+                    if (!tags[tagName].includes(newId)) {
+                        tags[tagName].push(newId);
+                    }
+                }
+            });
+        }
+        
+        alert('Fichier ajouté avec succès! ID: ' + newId);
     }
     
     // Réinitialisation du formulaire
-    document.getElementById('addFileForm').reset();
-    updateCollectionsSelect();
+    resetFileForm();
     
     // Mise à jour de l'affichage
     updateCollectionsList();
     updateTagsCloud();
     performSearch();
-    
-    alert('Fichier ajouté avec succès! ID: ' + id);
 });
 
-// Créer une nouvelle collection
+// Mettre à jour les tags d'un fichier
+function updateFileTags(fileId, tagsInput) {
+    // Retirer le fichier de tous les tags existants
+    Object.keys(tags).forEach(tagName => {
+        const index = tags[tagName].indexOf(fileId);
+        if (index !== -1) {
+            tags[tagName].splice(index, 1);
+            // Supprimer le tag s'il ne contient plus de fichiers
+            if (tags[tagName].length === 0) {
+                delete tags[tagName];
+            }
+        }
+    });
+    
+    // Ajouter les nouveaux tags
+    if (tagsInput) {
+        const tagList = tagsInput.split(',').map(tag => tag.trim()).filter(tag => tag !== '');
+        
+        tagList.forEach(tagName => {
+            if (!tags[tagName]) {
+                tags[tagName] = [];
+            }
+            if (!tags[tagName].includes(fileId)) {
+                tags[tagName].push(fileId);
+            }
+        });
+    }
+}
+
+// Réinitialiser le formulaire de fichier
+function resetFileForm() {
+    document.getElementById('fileFormTitle').textContent = 'Ajouter un fichier';
+    document.getElementById('fileId').value = '';
+    document.getElementById('addFileForm').reset();
+    document.getElementById('submitFileBtn').textContent = 'Ajouter le fichier';
+    document.getElementById('cancelEditBtn').style.display = 'none';
+    isEditingFile = false;
+}
+
+// Modifier un fichier
+function editFile(file) {
+    isEditingFile = true;
+    document.getElementById('fileFormTitle').textContent = 'Modifier le fichier';
+    document.getElementById('fileId').value = file.id;
+    document.getElementById('fileName').value = file.name;
+    document.getElementById('fileDesc').value = file.description || '';
+    document.getElementById('fileType').value = file.type;
+    document.getElementById('fileLocation').value = file.location;
+    
+    // Récupérer les tags du fichier
+    const fileTags = [];
+    for (const [tagName, fileIds] of Object.entries(tags)) {
+        if (fileIds.includes(file.id)) {
+            fileTags.push(tagName);
+        }
+    }
+    document.getElementById('fileTags').value = fileTags.join(', ');
+    
+    // Cocher les collections du fichier
+    document.querySelectorAll('.collection-checkbox input').forEach(checkbox => {
+        checkbox.checked = file.collections && file.collections.includes(checkbox.value);
+    });
+    
+    document.getElementById('submitFileBtn').textContent = 'Modifier le fichier';
+    document.getElementById('cancelEditBtn').style.display = 'inline-block';
+    
+    // Scroll to form
+    document.querySelector('.add-file-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+// Annuler l'édition
+document.getElementById('cancelEditBtn').addEventListener('click', resetFileForm);
+
+// Créer ou modifier une collection
 document.getElementById('collectionForm').addEventListener('submit', function(e) {
     e.preventDefault();
     
+    const id = document.getElementById('collectionId').value;
     const name = document.getElementById('collectionName').value;
     const description = document.getElementById('collectionDescription').value;
     const color = document.getElementById('collectionColor').value;
     
-    const collection = {
-        id: generateId('collection'),
-        name,
-        description,
-        color,
-        files: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-    };
-    
-    collections.push(collection);
+    if (isEditingCollection && id) {
+        // Modification d'une collection existante
+        const collectionIndex = collections.findIndex(c => c.id === id);
+        if (collectionIndex !== -1) {
+            collections[collectionIndex] = {
+                ...collections[collectionIndex],
+                name,
+                description,
+                color,
+                updatedAt: new Date().toISOString()
+            };
+            alert('Collection modifiée avec succès!');
+        }
+    } else {
+        // Création d'une nouvelle collection
+        const collection = {
+            id: generateId('collection'),
+            name,
+            description,
+            color,
+            files: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+        
+        collections.push(collection);
+        alert(`Collection "${name}" créée avec succès!`);
+    }
     
     // Fermer le modal
     document.getElementById('collectionModal').style.display = 'none';
@@ -141,9 +285,105 @@ document.getElementById('collectionForm').addEventListener('submit', function(e)
     // Mettre à jour les interfaces
     updateCollectionsList();
     updateCollectionsSelect();
-    
-    alert(`Collection "${name}" créée avec succès!`);
+    performSearch();
 });
+
+// Modifier une collection
+function editCollection(collectionId) {
+    const collection = collections.find(c => c.id === collectionId);
+    if (!collection) return;
+    
+    isEditingCollection = true;
+    document.getElementById('collectionModalTitle').textContent = 'Modifier la collection';
+    document.getElementById('collectionId').value = collection.id;
+    document.getElementById('collectionName').value = collection.name;
+    document.getElementById('collectionDescription').value = collection.description || '';
+    document.getElementById('collectionColor').value = collection.color;
+    document.getElementById('saveCollectionBtn').textContent = 'Modifier la collection';
+    document.getElementById('deleteCollectionBtn').style.display = 'inline-block';
+    
+    document.getElementById('collectionModal').style.display = 'flex';
+}
+
+// Supprimer une collection
+function deleteCollection(collectionId) {
+    showConfirmModal(
+        'Supprimer la collection',
+        'Êtes-vous sûr de vouloir supprimer cette collection ? Les fichiers ne seront pas supprimés, mais seront retirés de la collection.',
+        () => {
+            const collectionIndex = collections.findIndex(c => c.id === collectionId);
+            if (collectionIndex !== -1) {
+                // Retirer la collection de tous les fichiers
+                const collection = collections[collectionIndex];
+                if (collection.files) {
+                    collection.files.forEach(fileId => {
+                        const file = files.find(f => f.id === fileId);
+                        if (file && file.collections) {
+                            const collectionIndexInFile = file.collections.indexOf(collectionId);
+                            if (collectionIndexInFile !== -1) {
+                                file.collections.splice(collectionIndexInFile, 1);
+                            }
+                        }
+                    });
+                }
+                
+                // Supprimer la collection
+                collections.splice(collectionIndex, 1);
+                
+                // Mettre à jour l'affichage
+                updateCollectionsList();
+                updateCollectionsSelect();
+                performSearch();
+                
+                alert('Collection supprimée avec succès!');
+            }
+        }
+    );
+}
+
+// Annuler l'édition de collection
+document.getElementById('cancelCollectionBtn').addEventListener('click', function() {
+    document.getElementById('collectionModal').style.display = 'none';
+    resetCollectionForm();
+});
+
+// Réinitialiser le formulaire de collection
+function resetCollectionForm() {
+    document.getElementById('collectionModalTitle').textContent = 'Créer une nouvelle collection';
+    document.getElementById('collectionId').value = '';
+    document.getElementById('collectionForm').reset();
+    document.getElementById('collectionColor').value = '#3498db';
+    document.getElementById('saveCollectionBtn').textContent = 'Créer la collection';
+    document.getElementById('deleteCollectionBtn').style.display = 'none';
+    isEditingCollection = false;
+}
+
+// Afficher un modal de confirmation
+function showConfirmModal(title, message, confirmCallback) {
+    document.getElementById('confirmModalTitle').textContent = title;
+    document.getElementById('confirmModalMessage').textContent = message;
+    document.getElementById('confirmModal').style.display = 'flex';
+    
+    const confirmBtn = document.getElementById('confirmActionBtn');
+    const cancelBtn = document.getElementById('cancelActionBtn');
+    
+    // Supprimer les anciens événements
+    const newConfirmBtn = confirmBtn.cloneNode(true);
+    const newCancelBtn = cancelBtn.cloneNode(true);
+    
+    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+    cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+    
+    // Ajouter les nouveaux événements
+    document.getElementById('confirmActionBtn').addEventListener('click', function() {
+        confirmCallback();
+        document.getElementById('confirmModal').style.display = 'none';
+    });
+    
+    document.getElementById('cancelActionBtn').addEventListener('click', function() {
+        document.getElementById('confirmModal').style.display = 'none';
+    });
+}
 
 // Mise à jour de la liste des collections
 function updateCollectionsList() {
@@ -191,12 +431,37 @@ function updateCollectionsList() {
                 <div class="collection-name">${collection.name}</div>
             </div>
             <div class="collection-count">${collection.files ? collection.files.length : 0}</div>
+            <div class="collection-actions">
+                <button class="collection-action-btn edit-collection" data-id="${collection.id}" title="Modifier">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <button class="collection-action-btn delete-collection" data-id="${collection.id}" title="Supprimer">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
         `;
-        collectionItem.addEventListener('click', () => {
-            currentCollectionId = collection.id;
-            updateCollectionsList();
-            performSearch();
+        collectionItem.addEventListener('click', (e) => {
+            if (!e.target.closest('.collection-actions')) {
+                currentCollectionId = collection.id;
+                updateCollectionsList();
+                performSearch();
+            }
         });
+        
+       // Ajouter les événements pour les boutons d'action
+        const editBtn = collectionItem.querySelector('.edit-collection');
+        const deleteBtn = collectionItem.querySelector('.delete-collection');
+        
+        editBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            editCollection(collection.id);
+        });
+        
+        deleteBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            deleteCollection(collection.id);
+        });
+        
         collectionsList.appendChild(collectionItem);
     });
 }
@@ -470,8 +735,8 @@ function viewFile(file) {
     } else if (file.type === 'lien') {
         fileViewer.innerHTML = `<iframe src="${file.location}" title="${file.name}"></iframe>`;
     } else if (file.type === 'document') {
-        // Pour les démonstrations, on utilise Google Docs viewer
-        fileViewer.innerHTML = `<iframe src="https://docs.google.com/gview?url=${encodeURIComponent(file.location)}&embedded=true" title="${file.name}"></iframe>`;
+        // Pour les documents, on utilise Google Docs viewer
+        fileViewer.innerHTML = `<iframe src="https://docs.google.com/gview?url=${encodeURIComponent(file.location)}&embedded=true" style="width:100%; height:500px;" frameborder="0"></iframe>`;
     } else {
         fileViewer.innerHTML = `
             <div class="unsupported-format">
@@ -487,6 +752,61 @@ function viewFile(file) {
     // Mettre à jour l'affichage pour refléter le nouveau compteur de vues
     performSearch();
 }
+
+// Modifier un fichier depuis le modal
+document.getElementById('editFileBtn').addEventListener('click', function() {
+    if (currentFile) {
+        document.getElementById('fileModal').style.display = 'none';
+        editFile(currentFile);
+    }
+});
+
+// Supprimer un fichier
+document.getElementById('deleteFileBtn').addEventListener('click', function() {
+    if (currentFile) {
+        showConfirmModal(
+            'Supprimer le fichier',
+            `Êtes-vous sûr de vouloir supprimer le fichier "${currentFile.name}" ? Cette action est irréversible.`,
+            () => {
+                // Retirer le fichier de toutes les collections
+                collections.forEach(collection => {
+                    if (collection.files) {
+                        const index = collection.files.indexOf(currentFile.id);
+                        if (index !== -1) {
+                            collection.files.splice(index, 1);
+                        }
+                    }
+                });
+                
+                // Retirer le fichier de tous les tags
+                Object.keys(tags).forEach(tagName => {
+                    const index = tags[tagName].indexOf(currentFile.id);
+                    if (index !== -1) {
+                        tags[tagName].splice(index, 1);
+                        // Supprimer le tag s'il ne contient plus de fichiers
+                        if (tags[tagName].length === 0) {
+                            delete tags[tagName];
+                        }
+                    }
+                });
+                
+                // Supprimer le fichier
+                const fileIndex = files.findIndex(f => f.id === currentFile.id);
+                if (fileIndex !== -1) {
+                    files.splice(fileIndex, 1);
+                }
+                
+                // Fermer le modal et mettre à jour l'affichage
+                document.getElementById('fileModal').style.display = 'none';
+                updateCollectionsList();
+                updateTagsCloud();
+                performSearch();
+                
+                alert('Fichier supprimé avec succès!');
+            }
+        );
+    }
+});
 
 // Afficher les statistiques
 function showStats() {
@@ -641,8 +961,8 @@ function initSampleData() {
             name: 'Rapport de travail',
             description: 'Rapport trimestriel de travail',
             type: 'document',
-            location: '/documents/rapport.pdf',
-            locationType: 'interne',
+            location: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            locationType: 'externe',
             views: 23,
             createdAt: '2023-03-10T09:15:00Z'
         },
@@ -801,6 +1121,11 @@ window.addEventListener('click', function(e) {
     if (e.target === collectionModal) {
         collectionModal.style.display = 'none';
     }
+    
+    const confirmModal = document.getElementById('confirmModal');
+    if (e.target === confirmModal) {
+        confirmModal.style.display = 'none';
+    }
 });
 
 // Afficher les statistiques
@@ -813,12 +1138,27 @@ document.getElementById('closeStatsModal').addEventListener('click', function() 
 
 // Ouvrir le modal de création de collection
 document.getElementById('addCollectionBtn').addEventListener('click', function() {
+    resetCollectionForm();
     document.getElementById('collectionModal').style.display = 'flex';
 });
 
 // Fermer le modal de collection
 document.getElementById('closeCollectionModal').addEventListener('click', function() {
     document.getElementById('collectionModal').style.display = 'none';
+});
+
+// Supprimer une collection
+document.getElementById('deleteCollectionBtn').addEventListener('click', function() {
+    const collectionId = document.getElementById('collectionId').value;
+    if (collectionId) {
+        document.getElementById('collectionModal').style.display = 'none';
+        deleteCollection(collectionId);
+    }
+});
+
+// Fermer le modal de confirmation
+document.getElementById('closeConfirmModal').addEventListener('click', function() {
+    document.getElementById('confirmModal').style.display = 'none';
 });
 
 // Sauvegarder les données

@@ -70,8 +70,9 @@
             </div>
             
             <div class="add-file-section">
-                <h3>Ajouter un fichier</h3>
+                <h3 id="fileFormTitle">Ajouter un fichier</h3>
                 <form id="addFileForm" class="add-file-form">
+                    <input type="hidden" id="fileId">
                     <div class="form-group">
                         <label class="form-label">Nom</label>
                         <input type="text" class="form-input" id="fileName" required>
@@ -105,7 +106,10 @@
                             <!-- Les collections seront ajoutées dynamiquement -->
                         </div>
                     </div>
-                    <button type="submit" class="btn btn-primary">Ajouter le fichier</button>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary" id="submitFileBtn">Ajouter le fichier</button>
+                        <button type="button" class="btn btn-secondary" id="cancelEditBtn" style="display: none;">Annuler</button>
+                    </div>
                 </form>
             </div>
         </aside>
@@ -158,6 +162,14 @@
         <div class="modal-content">
             <span class="close-modal" id="closeModal">&times;</span>
             <h2 id="modalTitle">Visualisation du fichier</h2>
+            <div class="file-actions-modal">
+                <button class="btn btn-secondary" id="editFileBtn">
+                    <i class="fas fa-edit"></i> Modifier
+                </button>
+                <button class="btn btn-danger" id="deleteFileBtn">
+                    <i class="fas fa-trash"></i> Supprimer
+                </button>
+            </div>
             <div class="file-viewer" id="fileViewer">
                 <!-- Le contenu du fichier sera affiché ici -->
             </div>
@@ -210,12 +222,13 @@
         </div>
     </div>
 
-    <!-- Modal de création de collection -->
+    <!-- Modal de création/édition de collection -->
     <div class="modal" id="collectionModal">
         <div class="modal-content">
             <span class="close-modal" id="closeCollectionModal">&times;</span>
             <h2 id="collectionModalTitle">Créer une nouvelle collection</h2>
             <form id="collectionForm">
+                <input type="hidden" id="collectionId">
                 <div class="form-group">
                     <label class="form-label">Nom de la collection</label>
                     <input type="text" class="form-input" id="collectionName" required>
@@ -228,8 +241,27 @@
                     <label class="form-label">Couleur d'accentuation</label>
                     <input type="color" class="form-input" id="collectionColor" value="#3498db">
                 </div>
-                <button type="submit" class="btn btn-primary" id="saveCollectionBtn">Créer la collection</button>
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary" id="saveCollectionBtn">Créer la collection</button>
+                    <button type="button" class="btn btn-danger" id="deleteCollectionBtn" style="display: none;">
+                        <i class="fas fa-trash"></i> Supprimer
+                    </button>
+                    <button type="button" class="btn btn-secondary" id="cancelCollectionBtn">Annuler</button>
+                </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Modal de confirmation de suppression -->
+    <div class="modal" id="confirmModal">
+        <div class="modal-content">
+            <span class="close-modal" id="closeConfirmModal">&times;</span>
+            <h2 id="confirmModalTitle">Confirmation</h2>
+            <p id="confirmModalMessage">Êtes-vous sûr de vouloir effectuer cette action ?</p>
+            <div class="form-actions">
+                <button class="btn btn-danger" id="confirmActionBtn">Confirmer</button>
+                <button class="btn btn-secondary" id="cancelActionBtn">Annuler</button>
+            </div>
         </div>
     </div>
     

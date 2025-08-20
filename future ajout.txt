@@ -1,5 +1,5 @@
 Interface de glisser-déposer
-Gestion des collections/albums
+--Gestion-des-collections/albums--
 Recherche avancée avec interface visuelle
 Métadonnées EXIF pour les images
 Interface responsive avancée
