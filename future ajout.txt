@@ -1,0 +1,15 @@
+Interface de glisser-déposer
+Gestion des collections/albums
+Recherche avancée avec interface visuelle
+Métadonnées EXIF pour les images
+Interface responsive avancée
+Historique de recherche
+Mode sombre
+Suggestions de tags automatiques
+
+
+------------------------Avencer----------------------------
+OCR intégré
+Édition basique d'images
+Interface multilingue
+Intelligence artificielle intégrée

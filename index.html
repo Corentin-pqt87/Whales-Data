@@ -50,6 +50,18 @@
                 </div>
             </div>
             
+            <div class="collections-section">
+                <div class="section-header">
+                    <h3>Collections</h3>
+                    <button class="btn-icon" id="addCollectionBtn" title="Créer une nouvelle collection">
+                        <i class="fas fa-plus"></i>
+                    </button>
+                </div>
+                <div class="collections-list" id="collectionsList">
+                    <!-- Les collections seront générées dynamiquement -->
+                </div>
+            </div>
+            
             <div class="tags-section">
                 <h3>Tags populaires</h3>
                 <div class="tags-cloud" id="tagsCloud">
@@ -87,6 +99,12 @@
                         <label class="form-label">Tags (séparés par des virgules)</label>
                         <input type="text" class="form-input" id="fileTags" placeholder="Ex: vacances, montagne, été">
                     </div>
+                    <div class="form-group">
+                        <label class="form-label">Collections</label>
+                        <div class="collections-select" id="collectionsSelect">
+                            <!-- Les collections seront ajoutées dynamiquement -->
+                        </div>
+                    </div>
                     <button type="submit" class="btn btn-primary">Ajouter le fichier</button>
                 </form>
             </div>
@@ -94,15 +112,20 @@
         
         <main class="panel">
             <div class="results-header">
-                <h2>Résultats de recherche <span id="resultsCount"></span></h2>
-                <div class="sort-options">
-                    <label for="sortSelect">Trier par:</label>
-                    <select id="sortSelect" class="form-select">
-                        <option value="newest">Plus récent</option>
-                        <option value="oldest">Plus ancien</option>
-                        <option value="popular">Plus populaire</option>
-                        <option value="name">Nom (A-Z)</option>
-                    </select>
+                <h2 id="resultsTitle">Résultats de recherche <span id="resultsCount"></span></h2>
+                <div class="header-actions">
+                    <div class="sort-options">
+                        <label for="sortSelect">Trier par:</label>
+                        <select id="sortSelect" class="form-select">
+                            <option value="newest">Plus récent</option>
+                            <option value="oldest">Plus ancien</option>
+                            <option value="popular">Plus populaire</option>
+                            <option value="name">Nom (A-Z)</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-secondary" id="toggleViewBtn">
+                        <i class="fas fa-th"></i> Vue grille
+                    </button>
                 </div>
             </div>
             <div class="results-section" id="resultsContainer">
@@ -167,6 +190,10 @@
                     <h3>Vues totales</h3>
                     <p id="totalViews">0</p>
                 </div>
+                <div class="stat-card">
+                    <h3>Collections</h3>
+                    <p id="totalCollections">0</p>
+                </div>
             </div>
             <div class="popular-section">
                 <h3>Fichiers les plus populaires</h3>
@@ -174,6 +201,35 @@
                     <!-- Les fichiers populaires seront affichés ici -->
                 </div>
             </div>
+            <div class="popular-section">
+                <h3>Collections les plus populaires</h3>
+                <div id="popularCollections">
+                    <!-- Les collections populaires seront affichées ici -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de création de collection -->
+    <div class="modal" id="collectionModal">
+        <div class="modal-content">
+            <span class="close-modal" id="closeCollectionModal">&times;</span>
+            <h2 id="collectionModalTitle">Créer une nouvelle collection</h2>
+            <form id="collectionForm">
+                <div class="form-group">
+                    <label class="form-label">Nom de la collection</label>
+                    <input type="text" class="form-input" id="collectionName" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <textarea class="form-input" id="collectionDescription" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Couleur d'accentuation</label>
+                    <input type="color" class="form-input" id="collectionColor" value="#3498db">
+                </div>
+                <button type="submit" class="btn btn-primary" id="saveCollectionBtn">Créer la collection</button>
+            </form>
         </div>
     </div>
     

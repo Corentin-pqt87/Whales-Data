@@ -1,7 +1,10 @@
-// Structure de données pour stocker les objets et les tags
+// Structure de données pour stocker les objets, tags et collections
 let files = [];
 let tags = {};
+let collections = [];
 let currentFile = null;
+let currentCollectionId = null;
+let isListView = false;
 
 // Génération d'ID unique selon les spécifications
 function generateId(type) {
@@ -11,7 +14,8 @@ function generateId(type) {
         'document': '3',
         'audio': '4',
         'lien': '5',
-        'autre': '6'
+        'autre': '6',
+        'collection': '7'
     };
     
     const prefix = typePrefixes[type] || '0';
@@ -54,6 +58,12 @@ document.getElementById('addFileForm').addEventListener('submit', function(e) {
     const tagsInput = document.getElementById('fileTags').value;
     const locationType = determineLocationType(location);
     
+    // Récupérer les collections sélectionnées
+    const selectedCollections = [];
+    document.querySelectorAll('.collection-checkbox input:checked').forEach(checkbox => {
+        selectedCollections.push(checkbox.value);
+    });
+    
     // Création de l'objet fichier
     const id = generateId(type);
     const file = {
@@ -63,11 +73,22 @@ document.getElementById('addFileForm').addEventListener('submit', function(e) {
         type,
         location,
         locationType,
+        collections: selectedCollections,
         views: 0,
         createdAt: new Date().toISOString()
     };
     
     files.push(file);
+    
+    // Ajouter le fichier aux collections
+    selectedCollections.forEach(collectionId => {
+        const collection = collections.find(c => c.id === collectionId);
+        if (collection) {
+            if (!collection.files) collection.files = [];
+            collection.files.push(id);
+            collection.updatedAt = new Date().toISOString();
+        }
+    });
     
     // Gestion des tags
     if (tagsInput) {
@@ -83,13 +104,136 @@ document.getElementById('addFileForm').addEventListener('submit', function(e) {
     
     // Réinitialisation du formulaire
     document.getElementById('addFileForm').reset();
+    updateCollectionsSelect();
     
     // Mise à jour de l'affichage
+    updateCollectionsList();
     updateTagsCloud();
     performSearch();
     
     alert('Fichier ajouté avec succès! ID: ' + id);
 });
+
+// Créer une nouvelle collection
+document.getElementById('collectionForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const name = document.getElementById('collectionName').value;
+    const description = document.getElementById('collectionDescription').value;
+    const color = document.getElementById('collectionColor').value;
+    
+    const collection = {
+        id: generateId('collection'),
+        name,
+        description,
+        color,
+        files: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+    };
+    
+    collections.push(collection);
+    
+    // Fermer le modal
+    document.getElementById('collectionModal').style.display = 'none';
+    document.getElementById('collectionForm').reset();
+    
+    // Mettre à jour les interfaces
+    updateCollectionsList();
+    updateCollectionsSelect();
+    
+    alert(`Collection "${name}" créée avec succès!`);
+});
+
+// Mise à jour de la liste des collections
+function updateCollectionsList() {
+    const collectionsList = document.getElementById('collectionsList');
+    collectionsList.innerHTML = '';
+    
+    if (collections.length === 0) {
+        collectionsList.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-folder-open"></i>
+                <p>Aucune collection</p>
+                <p>Créez votre première collection pour organiser vos fichiers</p>
+            </div>
+        `;
+        return;
+    }
+    
+    // Trier les collections par date de modification
+    const sortedCollections = [...collections].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    
+    // Ajouter l'option "Tous les fichiers"
+    const allFilesItem = document.createElement('div');
+    allFilesItem.className = `collection-item ${currentCollectionId === null ? 'active' : ''}`;
+    allFilesItem.innerHTML = `
+        <div class="collection-info">
+            <div class="collection-color" style="background-color: #3498db"></div>
+            <div class="collection-name">Tous les fichiers</div>
+        </div>
+        <div class="collection-count">${files.length}</div>
+    `;
+    allFilesItem.addEventListener('click', () => {
+        currentCollectionId = null;
+        updateCollectionsList();
+        performSearch();
+    });
+    collectionsList.appendChild(allFilesItem);
+    
+    // Ajouter les collections
+    sortedCollections.forEach(collection => {
+        const collectionItem = document.createElement('div');
+        collectionItem.className = `collection-item ${currentCollectionId === collection.id ? 'active' : ''}`;
+        collectionItem.innerHTML = `
+            <div class="collection-info">
+                <div class="collection-color" style="background-color: ${collection.color}"></div>
+                <div class="collection-name">${collection.name}</div>
+            </div>
+            <div class="collection-count">${collection.files ? collection.files.length : 0}</div>
+        `;
+        collectionItem.addEventListener('click', () => {
+            currentCollectionId = collection.id;
+            updateCollectionsList();
+            performSearch();
+        });
+        collectionsList.appendChild(collectionItem);
+    });
+}
+
+// Mise à jour de la sélection de collections dans le formulaire
+function updateCollectionsSelect() {
+    const collectionsSelect = document.getElementById('collectionsSelect');
+    collectionsSelect.innerHTML = '';
+    
+    if (collections.length === 0) {
+        collectionsSelect.innerHTML = '<p>Aucune collection disponible. Créez-en une d\'abord.</p>';
+        return;
+    }
+    
+    collections.forEach(collection => {
+        const checkboxContainer = document.createElement('div');
+        checkboxContainer.className = 'collection-checkbox';
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = `collection-${collection.id}`;
+        checkbox.name = 'collections';
+        checkbox.value = collection.id;
+        
+        const label = document.createElement('label');
+        label.className = 'collection-checkbox-label';
+        label.htmlFor = `collection-${collection.id}`;
+        label.innerHTML = `
+            <span class="collection-checkbox-color" style="background-color: ${collection.color}"></span>
+            ${collection.name}
+        `;
+        
+        checkboxContainer.appendChild(checkbox);
+        checkboxContainer.appendChild(label);
+        collectionsSelect.appendChild(checkboxContainer);
+    });
+}
 
 // Mise à jour du nuage de tags
 function updateTagsCloud() {
@@ -117,39 +261,43 @@ function performSearch() {
     const query = document.getElementById('searchInput').value.toLowerCase();
     const resultsContainer = document.getElementById('resultsContainer');
     const resultsCount = document.getElementById('resultsCount');
+    const resultsTitle = document.getElementById('resultsTitle');
     const sortOption = document.getElementById('sortSelect').value;
     
-    // Si la recherche est vide, afficher tous les fichiers
-    if (!query) {
-        displayFiles(sortFiles(files, sortOption));
-        resultsCount.textContent = `(${files.length} résultats)`;
-        return;
-    }
-    
-    // Logique de recherche simplifiée pour la démonstration
-    const searchTerms = query.split(' ');
     let results = [];
     
-    // Recherche basique par nom et tags
-    files.forEach(file => {
-        let match = false;
-        
-        // Vérification du nom
-        if (file.name.toLowerCase().includes(query)) {
-            match = true;
+    // Déterminer les fichiers à afficher en fonction de la collection active
+    if (currentCollectionId) {
+        const collection = collections.find(c => c.id === currentCollectionId);
+        if (collection && collection.files) {
+            results = files.filter(file => collection.files.includes(file.id));
+            resultsTitle.textContent = `Fichiers dans la collection "${collection.name}"`;
         }
-        
-        // Vérification des tags
-        for (const [tagName, fileIds] of Object.entries(tags)) {
-            if (tagName.toLowerCase().includes(query.replace('#', '')) && fileIds.includes(file.id)) {
+    } else {
+        results = [...files];
+        resultsTitle.textContent = 'Résultats de recherche';
+    }
+    
+    // Appliquer la recherche textuelle si spécifiée
+    if (query) {
+        results = results.filter(file => {
+            let match = false;
+            
+            // Vérification du nom
+            if (file.name.toLowerCase().includes(query)) {
                 match = true;
             }
-        }
-        
-        if (match) {
-            results.push(file);
-        }
-    });
+            
+            // Vérification des tags
+            for (const [tagName, fileIds] of Object.entries(tags)) {
+                if (tagName.toLowerCase().includes(query.replace('#', '')) && fileIds.includes(file.id)) {
+                    match = true;
+                }
+            }
+            
+            return match;
+        });
+    }
     
     displayFiles(sortFiles(results, sortOption));
     resultsCount.textContent = `(${results.length} résultats)`;
@@ -177,15 +325,28 @@ function displayFiles(filesToDisplay) {
     resultsContainer.innerHTML = '';
     
     if (filesToDisplay.length === 0) {
-        resultsContainer.innerHTML = '<p>Aucun fichier trouvé.</p>';
+        resultsContainer.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-search"></i>
+                <p>Aucun fichier trouvé</p>
+                <p>Essayez de modifier vos critères de recherche</p>
+            </div>
+        `;
         return;
     }
     
     const previewEnabled = isPreviewEnabled();
     
+    // Appliquer la classe pour la vue liste si nécessaire
+    if (isListView) {
+        resultsContainer.classList.add('list-view');
+    } else {
+        resultsContainer.classList.remove('list-view');
+    }
+    
     filesToDisplay.forEach(file => {
         const fileCard = document.createElement('div');
-        fileCard.className = 'file-card';
+        fileCard.className = `file-card ${isListView ? 'list-view' : ''}`;
         fileCard.setAttribute('data-id', file.id);
         
         // Icône selon le type de fichier
@@ -197,6 +358,17 @@ function displayFiles(filesToDisplay) {
             if (fileIds.includes(file.id)) {
                 fileTags.push(tagName);
             }
+        }
+        
+        // Trouver les collections associées à ce fichier
+        const fileCollections = [];
+        if (file.collections && file.collections.length > 0) {
+            file.collections.forEach(collectionId => {
+                const collection = collections.find(c => c.id === collectionId);
+                if (collection) {
+                    fileCollections.push(collection);
+                }
+            });
         }
         
         // Prévisualisation selon le type de fichier
@@ -219,9 +391,20 @@ function displayFiles(filesToDisplay) {
             <div class="file-info">
                 <div class="file-name">${file.name}</div>
                 <div class="file-desc">${file.description}</div>
-                <div class="file-tags">
-                    ${fileTags.map(tag => `<span class="file-tag">#${tag}</span>`).join('')}
-                </div>
+                ${fileCollections.length > 0 ? `
+                    <div class="file-collections">
+                        ${fileCollections.map(collection => `
+                            <span class="file-collection" style="background-color: ${collection.color}20; color: ${collection.color}">
+                                ${collection.name}
+                            </span>
+                        `).join('')}
+                    </div>
+                ` : ''}
+                ${fileTags.length > 0 ? `
+                    <div class="file-tags">
+                        ${fileTags.map(tag => `<span class="file-tag">#${tag}</span>`).join('')}
+                    </div>
+                ` : ''}
             </div>
         `;
         
@@ -311,11 +494,14 @@ function showStats() {
     const totalFiles = document.getElementById('totalFiles');
     const totalTags = document.getElementById('totalTags');
     const totalViews = document.getElementById('totalViews');
+    const totalCollections = document.getElementById('totalCollections');
     const popularFiles = document.getElementById('popularFiles');
+    const popularCollections = document.getElementById('popularCollections');
     
     // Calculer les statistiques
     totalFiles.textContent = files.length;
     totalTags.textContent = Object.keys(tags).length;
+    totalCollections.textContent = collections.length;
     
     const viewsCount = files.reduce((total, file) => total + file.views, 0);
     totalViews.textContent = viewsCount;
@@ -342,6 +528,31 @@ function showStats() {
         });
     }
     
+    // Afficher les collections les plus populaires
+    popularCollections.innerHTML = '';
+    const sortedCollections = [...collections]
+        .filter(c => c.files && c.files.length > 0)
+        .sort((a, b) => b.files.length - a.files.length)
+        .slice(0, 5);
+    
+    if (sortedCollections.length === 0) {
+        popularCollections.innerHTML = '<p>Aucune collection avec des fichiers.</p>';
+    } else {
+        sortedCollections.forEach(collection => {
+            const collectionElement = document.createElement('div');
+            collectionElement.className = 'popular-collection';
+            collectionElement.innerHTML = `
+                <div class="popular-collection-info">
+                    <strong>${collection.name}</strong>
+                </div>
+                <div class="popular-collection-count">
+                    <i class="fas fa-file"></i> ${collection.files.length} fichiers
+                </div>
+            `;
+            popularCollections.appendChild(collectionElement);
+        });
+    }
+    
     statsModal.style.display = 'flex';
 }
 
@@ -349,7 +560,8 @@ function showStats() {
 function saveData() {
     const data = {
         files,
-        tags
+        tags,
+        collections
     };
     
     const dataStr = JSON.stringify(data, null, 2);
@@ -378,7 +590,10 @@ function loadData() {
                 if (data.files && data.tags) {
                     files = data.files;
                     tags = data.tags;
+                    collections = data.collections || [];
                     
+                    updateCollectionsList();
+                    updateCollectionsSelect();
                     updateTagsCloud();
                     performSearch();
                     
@@ -475,7 +690,47 @@ function initSampleData() {
     tags['loisirs'] = [sampleFiles[0].id, sampleFiles[1].id, sampleFiles[4].id, sampleFiles[5].id];
     tags['nature'] = [sampleFiles[0].id, sampleFiles[4].id, sampleFiles[5].id];
     
+    // Création de collections exemple
+    collections = [
+        {
+            id: generateId('collection'),
+            name: 'Vacances',
+            description: 'Photos et vidéos de vacances',
+            color: '#e74c3c',
+            files: [sampleFiles[0].id, sampleFiles[1].id, sampleFiles[4].id],
+            createdAt: '2023-01-15T10:30:00Z',
+            updatedAt: '2023-06-18T11:20:00Z'
+        },
+        {
+            id: generateId('collection'),
+            name: 'Travail',
+            description: 'Documents professionnels',
+            color: '#3498db',
+            files: [sampleFiles[2].id],
+            createdAt: '2023-03-10T09:15:00Z',
+            updatedAt: '2023-03-10T09:15:00Z'
+        },
+        {
+            id: generateId('collection'),
+            name: 'Nature',
+            description: 'Photos de paysages naturels',
+            color: '#27ae60',
+            files: [sampleFiles[0].id, sampleFiles[4].id, sampleFiles[5].id],
+            createdAt: '2023-05-12T18:30:00Z',
+            updatedAt: '2023-06-18T11:20:00Z'
+        }
+    ];
+    
+    // Associer les collections aux fichiers
+    sampleFiles[0].collections = [collections[0].id, collections[2].id];
+    sampleFiles[1].collections = [collections[0].id];
+    sampleFiles[2].collections = [collections[1].id];
+    sampleFiles[4].collections = [collections[0].id, collections[2].id];
+    sampleFiles[5].collections = [collections[2].id];
+    
     // Affichage initial
+    updateCollectionsList();
+    updateCollectionsSelect();
     updateTagsCloud();
     displayFiles(files);
     document.getElementById('resultsCount').textContent = `(${files.length} résultats)`;
@@ -493,6 +748,15 @@ document.getElementById('sortSelect').addEventListener('change', performSearch);
 
 // Case à cocher pour la prévisualisation
 document.getElementById('previewCheckbox').addEventListener('change', function() {
+    performSearch();
+});
+
+// Bouton pour basculer entre la vue grille et la vue liste
+document.getElementById('toggleViewBtn').addEventListener('click', function() {
+    isListView = !isListView;
+    this.innerHTML = isListView ? 
+        '<i class="fas fa-th-large"></i> Vue grille' : 
+        '<i class="fas fa-th"></i> Vue liste';
     performSearch();
 });
 
@@ -532,6 +796,11 @@ window.addEventListener('click', function(e) {
     if (e.target === statsModal) {
         statsModal.style.display = 'none';
     }
+    
+    const collectionModal = document.getElementById('collectionModal');
+    if (e.target === collectionModal) {
+        collectionModal.style.display = 'none';
+    }
 });
 
 // Afficher les statistiques
@@ -540,6 +809,16 @@ document.getElementById('viewStatsBtn').addEventListener('click', showStats);
 // Fermer le modal des statistiques
 document.getElementById('closeStatsModal').addEventListener('click', function() {
     document.getElementById('statsModal').style.display = 'none';
+});
+
+// Ouvrir le modal de création de collection
+document.getElementById('addCollectionBtn').addEventListener('click', function() {
+    document.getElementById('collectionModal').style.display = 'flex';
+});
+
+// Fermer le modal de collection
+document.getElementById('closeCollectionModal').addEventListener('click', function() {
+    document.getElementById('collectionModal').style.display = 'none';
 });
 
 // Sauvegarder les données
