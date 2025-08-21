@@ -1,0 +1,38 @@
+{
+  "files": [
+    {
+      "id": "11208139889090286",
+      "name": "ours garou DnD",
+      "description": "",
+      "type": "image",
+      "location": "file:///E:/projet/base%20de%20donner%20par%20tag/wereBear.jpg",
+      "locationType": "interne",
+      "collections": [
+        "75907801297768817"
+      ],
+      "views": 0,
+      "createdAt": "2025-08-21T07:31:50.643Z"
+    }
+  ],
+  "tags": {
+    "DnD": [
+      "11208139889090286"
+    ],
+    "monstre": [
+      "11208139889090286"
+    ]
+  },
+  "collections": [
+    {
+      "id": "75907801297768817",
+      "name": "D&D",
+      "description": "",
+      "color": "#3498db",
+      "files": [
+        "11208139889090286"
+      ],
+      "createdAt": "2025-08-21T07:31:45.603Z",
+      "updatedAt": "2025-08-21T07:31:50.643Z"
+    }
+  ]
+}

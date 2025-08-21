@@ -1168,4 +1168,4 @@ document.getElementById('saveDataBtn').addEventListener('click', saveData);
 document.getElementById('loadDataBtn').addEventListener('click', loadData);
 
 // Initialisation
-initSampleData();
+// initSampleData();
