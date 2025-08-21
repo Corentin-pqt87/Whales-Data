@@ -3,7 +3,7 @@ Interface de glisser-déposer
 Recherche avancée avec interface visuelle
 Métadonnées EXIF pour les images
 Interface responsive avancée
-Historique de recherche
+--Historique-de-recherche--
 Mode sombre
 Suggestions de tags automatiques
 

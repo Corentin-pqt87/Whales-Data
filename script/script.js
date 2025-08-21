@@ -522,7 +522,7 @@ function updateTagsCloud() {
 }
 
 // Fonction de recherche
-// Remplacer complètement la fonction performSearch
+// Remplacer la fonction performSearch par cette version améliorée
 function performSearch() {
     const query = document.getElementById('searchInput').value;
     const resultsContainer = document.getElementById('resultsContainer');
@@ -546,30 +546,7 @@ function performSearch() {
     
     // Appliquer la recherche textuelle si spécifiée
     if (query.trim()) {
-        const searchTerms = query.toLowerCase().split(/\s+/).filter(term => term.length > 0);
-        
-        results = results.filter(file => {
-            // Vérifier si le fichier correspond à tous les termes de recherche
-            return searchTerms.every(term => {
-                // Si le terme commence par #, c'est un tag
-                if (term.startsWith('#')) {
-                    const tagName = term.substring(1);
-                    return tags[tagName] && tags[tagName].includes(file.id);
-                }
-                
-                // Si le terme est un opérateur booléen, on l'ignore dans la recherche simple
-                if (term === 'and' || term === 'or' || term === 'not' || 
-                    term === '(' || term === ')' || term === '#' || term === '') {
-                    return true;
-                }
-                
-                // Recherche dans le nom et la description
-                const nameMatch = file.name.toLowerCase().includes(term);
-                const descMatch = file.description && file.description.toLowerCase().includes(term);
-                
-                return nameMatch || descMatch;
-            });
-        });
+        results = filterWithAdvancedSearch(query, results);
     }
     
     displayFiles(sortFiles(results, sortOption));
@@ -581,39 +558,88 @@ function performSearch() {
     }
 }
 
-// Ajouter une fonction pour une recherche avancée (optionnelle)
-function performAdvancedSearch(query) {
-    try {
-        // Logique simplifiée pour les recherches avancées
-        const terms = query.toLowerCase().split(/\s+/).filter(term => term);
-        let results = [...files];
-        
-        terms.forEach(term => {
-            if (term.startsWith('#')) {
-                // Recherche par tag
-                const tagName = term.substring(1);
-                if (tags[tagName]) {
-                    results = results.filter(file => tags[tagName].includes(file.id));
-                } else {
-                    results = []; // Tag inexistant
-                }
-            } else if (term === 'and' || term === 'or') {
-                // Opérateurs booléens - à implémenter pour une recherche vraiment avancée
-                return results;
-            } else {
-                // Recherche textuelle simple
-                results = results.filter(file => 
-                    file.name.toLowerCase().includes(term) || 
-                    (file.description && file.description.toLowerCase().includes(term))
-                );
-            }
-        });
-        
-        return results;
-    } catch (error) {
-        console.error('Erreur dans la recherche avancée:', error);
-        return [];
+// Nouvelle fonction pour gérer la recherche avancée avec NOT
+function filterWithAdvancedSearch(query, initialResults) {
+    let results = [...initialResults];
+    const queryLower = query.toLowerCase();
+    
+    // Détecter les patterns NOT ou parenthèses
+    const notPattern = /not\(([^)]+)\)/gi;
+    const notPatternSimple = /not\s+([^\s)]+)/gi;
+    
+    let match;
+    const excludeTerms = [];
+    
+    // Extraire les termes à exclure avec not()
+    while ((match = notPattern.exec(queryLower)) !== null) {
+        excludeTerms.push(match[1].trim());
     }
+    
+    // Extraire les termes à exclure avec not (sans parenthèses)
+    while ((match = notPatternSimple.exec(queryLower)) !== null) {
+        excludeTerms.push(match[1].trim());
+    }
+    
+    // Filtrer les résultats pour exclure les termes indésirables
+    if (excludeTerms.length > 0) {
+        results = results.filter(file => {
+            return !excludeTerms.some(excludeTerm => {
+                // Vérifier si le terme exclu est un tag
+                if (excludeTerm.startsWith('#')) {
+                    const tagName = excludeTerm.substring(1);
+                    return tags[tagName] && tags[tagName].includes(file.id);
+                }
+                
+                // Vérifier si le terme exclu est dans le nom ou la description
+                const nameMatch = file.name.toLowerCase().includes(excludeTerm);
+                const descMatch = file.description && file.description.toLowerCase().includes(excludeTerm);
+                
+                return nameMatch || descMatch;
+            });
+        });
+    }
+    
+    // Maintenant traiter les termes inclusifs (le reste de la requête)
+    const inclusiveQuery = queryLower
+        .replace(notPattern, '')
+        .replace(notPatternSimple, '')
+        .trim();
+    
+    if (inclusiveQuery) {
+        const searchTerms = inclusiveQuery.split(/\s+/).filter(term => term.length > 0);
+        
+        results = results.filter(file => {
+            return searchTerms.every(term => {
+                // Ignorer les opérateurs vides
+                if (term === 'and' || term === 'or' || term === 'not' || term === '') {
+                    return true;
+                }
+                
+                // Si le terme commence par #, c'est un tag
+                if (term.startsWith('#')) {
+                    const tagName = term.substring(1);
+                    return tags[tagName] && tags[tagName].includes(file.id);
+                }
+                
+                // Recherche dans le nom et la description
+                const nameMatch = file.name.toLowerCase().includes(term);
+                const descMatch = file.description && file.description.toLowerCase().includes(term);
+                
+                return nameMatch || descMatch;
+            });
+        });
+    }
+    
+    return results;
+}
+// formater l'affichage des requêtes
+function formatSearchQueryDisplay(query) {
+    if (!query) return '';
+    
+    // Mettre en évidence les termes NOT
+    return query
+        .replace(/(not\([^)]+\))/gi, '<span style="color: var(--accent-color); font-weight: bold;">$1</span>')
+        .replace(/(not\s+[^\s)]+)/gi, '<span style="color: var(--accent-color); font-weight: bold;">$1</span>');
 }
 
 // Trier les fichiers selon l'option sélectionnée
@@ -997,8 +1023,8 @@ function initSampleData() {
             resultCount: 1
         },
         {
-            query: '#nature',
-            timestamp: new Date(Date.now() - 172800000).toISOString(),
+            query: 'image not(video)',
+            timestamp: new Date(Date.now() - 3600000).toISOString(),
             resultCount: 3
         },
         {
@@ -1203,15 +1229,14 @@ function updateSearchHistory() {
         const historyItem = document.createElement('div');
         historyItem.className = 'history-item';
         
-        // Formater la requête pour l'affichage
-        const displayQuery = item.query.length > 50 
-            ? item.query.substring(0, 47) + '...' 
+        const displayQuery = item.query.length > 45 
+            ? item.query.substring(0, 42) + '...' 
             : item.query;
         
         historyItem.innerHTML = `
             <div class="history-content">
                 <div class="history-query" title="${item.query.replace(/"/g, '&quot;')}">
-                    "${displayQuery}"
+                    ${displayQuery}
                 </div>
                 <div class="history-info">
                     <span class="history-date">${formatDate(item.timestamp)}</span>
@@ -1222,6 +1247,11 @@ function updateSearchHistory() {
                 <i class="fas fa-times"></i>
             </button>
         `;
+        
+        // Ajouter une classe spéciale pour les recherches avec NOT
+        if (item.query.toLowerCase().includes('not')) {
+            historyItem.classList.add('has-exclusion');
+        }
         
         // Événement pour recharger la recherche
         historyItem.addEventListener('click', (e) => {
@@ -1272,8 +1302,8 @@ function enhanceSearchExperience() {
         }
     });
     
-    // Afficher un placeholder avancé
-    searchInput.placeholder = 'Ex: (image OR vidéo) #vacances NOT #travail • Ctrl+K pour focus';
+    // Afficher un placeholder avancé avec les nouvelles fonctionnalités
+    searchInput.placeholder = 'Ex: image #vacances not(travail) • Ctrl+K pour focus';
 }
 
 // Ajouter l'événement pour le bouton d'effacement
