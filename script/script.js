@@ -522,16 +522,13 @@ function updateTagsCloud() {
 }
 
 // Fonction de recherche
+// Remplacer complètement la fonction performSearch
 function performSearch() {
-    const query = document.getElementById('searchInput').value.toLowerCase();
+    const query = document.getElementById('searchInput').value;
     const resultsContainer = document.getElementById('resultsContainer');
     const resultsCount = document.getElementById('resultsCount');
     const resultsTitle = document.getElementById('resultsTitle');
     const sortOption = document.getElementById('sortSelect').value;
-    // Ajouter à l'historique après la recherche
-    if (query.trim()) {
-        addToSearchHistory(query);
-    }
     
     let results = [];
     
@@ -548,28 +545,75 @@ function performSearch() {
     }
     
     // Appliquer la recherche textuelle si spécifiée
-    if (query) {
+    if (query.trim()) {
+        const searchTerms = query.toLowerCase().split(/\s+/).filter(term => term.length > 0);
+        
         results = results.filter(file => {
-            let match = false;
-            
-            // Vérification du nom
-            if (file.name.toLowerCase().includes(query)) {
-                match = true;
-            }
-            
-            // Vérification des tags
-            for (const [tagName, fileIds] of Object.entries(tags)) {
-                if (tagName.toLowerCase().includes(query.replace('#', '')) && fileIds.includes(file.id)) {
-                    match = true;
+            // Vérifier si le fichier correspond à tous les termes de recherche
+            return searchTerms.every(term => {
+                // Si le terme commence par #, c'est un tag
+                if (term.startsWith('#')) {
+                    const tagName = term.substring(1);
+                    return tags[tagName] && tags[tagName].includes(file.id);
                 }
-            }
-            
-            return match;
+                
+                // Si le terme est un opérateur booléen, on l'ignore dans la recherche simple
+                if (term === 'and' || term === 'or' || term === 'not' || 
+                    term === '(' || term === ')' || term === '#' || term === '') {
+                    return true;
+                }
+                
+                // Recherche dans le nom et la description
+                const nameMatch = file.name.toLowerCase().includes(term);
+                const descMatch = file.description && file.description.toLowerCase().includes(term);
+                
+                return nameMatch || descMatch;
+            });
         });
     }
     
     displayFiles(sortFiles(results, sortOption));
-    resultsCount.textContent = `(${results.length} résultats)`;
+    resultsCount.textContent = `(${results.length} résultat${results.length !== 1 ? 's' : ''})`;
+    
+    // Ajouter à l'historique après la recherche
+    if (query.trim()) {
+        addToSearchHistory(query);
+    }
+}
+
+// Ajouter une fonction pour une recherche avancée (optionnelle)
+function performAdvancedSearch(query) {
+    try {
+        // Logique simplifiée pour les recherches avancées
+        const terms = query.toLowerCase().split(/\s+/).filter(term => term);
+        let results = [...files];
+        
+        terms.forEach(term => {
+            if (term.startsWith('#')) {
+                // Recherche par tag
+                const tagName = term.substring(1);
+                if (tags[tagName]) {
+                    results = results.filter(file => tags[tagName].includes(file.id));
+                } else {
+                    results = []; // Tag inexistant
+                }
+            } else if (term === 'and' || term === 'or') {
+                // Opérateurs booléens - à implémenter pour une recherche vraiment avancée
+                return results;
+            } else {
+                // Recherche textuelle simple
+                results = results.filter(file => 
+                    file.name.toLowerCase().includes(term) || 
+                    (file.description && file.description.toLowerCase().includes(term))
+                );
+            }
+        });
+        
+        return results;
+    } catch (error) {
+        console.error('Erreur dans la recherche avancée:', error);
+        return [];
+    }
 }
 
 // Trier les fichiers selon l'option sélectionnée
@@ -940,16 +984,27 @@ function loadData() {
 function initSampleData() {
     // Ajout de quelques fichiers exemple
     // Ajouter quelques recherches d'exemple
+    // Ajouter des recherches d'exemple réalistes
     searchHistory = [
         {
-            query: 'image #vacances',
-            timestamp: new Date(Date.now() - 3600000).toISOString(), // il y a 1 heure
-            resultCount: 2
+            query: 'image vacances',
+            timestamp: new Date(Date.now() - 3600000).toISOString(),
+            resultCount: 3
         },
         {
-            query: 'video',
-            timestamp: new Date(Date.now() - 86400000).toISOString(), // il y a 1 jour
-            resultCount: 2
+            query: 'video randonnée',
+            timestamp: new Date(Date.now() - 86400000).toISOString(),
+            resultCount: 1
+        },
+        {
+            query: '#nature',
+            timestamp: new Date(Date.now() - 172800000).toISOString(),
+            resultCount: 3
+        },
+        {
+            query: 'document travail',
+            timestamp: new Date(Date.now() - 259200000).toISOString(),
+            resultCount: 1
         }
     ];
     const sampleFiles = [
@@ -1095,19 +1150,31 @@ let searchHistory = [];
 function addToSearchHistory(query) {
     if (!query.trim()) return;
     
-    // Retirer les doublons
-    searchHistory = searchHistory.filter(item => item.query !== query);
+    const resultCount = getCurrentResultCount();
     
-    // Ajouter la nouvelle recherche en tête
-    searchHistory.unshift({
-        query: query,
-        timestamp: new Date().toISOString(),
-        resultCount: getCurrentResultCount()
-    });
+    // Vérifier si la recherche existe déjà
+    const existingIndex = searchHistory.findIndex(item => item.query === query);
     
-    // Garder seulement les 5 dernières recherches
-    if (searchHistory.length > 5) {
-        searchHistory = searchHistory.slice(0, 5);
+    if (existingIndex !== -1) {
+        // Mettre à jour la recherche existante
+        searchHistory[existingIndex].timestamp = new Date().toISOString();
+        searchHistory[existingIndex].resultCount = resultCount;
+        
+        // Déplacer en première position
+        const existingItem = searchHistory.splice(existingIndex, 1)[0];
+        searchHistory.unshift(existingItem);
+    } else {
+        // Ajouter une nouvelle recherche
+        searchHistory.unshift({
+            query: query,
+            timestamp: new Date().toISOString(),
+            resultCount: resultCount
+        });
+        
+        // Garder seulement les 5 dernières recherches
+        if (searchHistory.length > 5) {
+            searchHistory.pop(); // Supprimer la plus ancienne
+        }
     }
     
     // Sauvegarder dans le localStorage
@@ -1116,6 +1183,7 @@ function addToSearchHistory(query) {
     // Mettre à jour l'affichage
     updateSearchHistory();
 }
+
 // Ajouter cette fonction pour mettre à jour l'affichage de l'historique
 function updateSearchHistory() {
     const historyList = document.getElementById('historyList');
@@ -1124,6 +1192,7 @@ function updateSearchHistory() {
     if (searchHistory.length === 0) {
         historyList.innerHTML = `
             <div class="empty-history">
+                <i class="fas fa-clock"></i>
                 <p>Aucune recherche récente</p>
             </div>
         `;
@@ -1133,22 +1202,33 @@ function updateSearchHistory() {
     searchHistory.forEach((item, index) => {
         const historyItem = document.createElement('div');
         historyItem.className = 'history-item';
+        
+        // Formater la requête pour l'affichage
+        const displayQuery = item.query.length > 50 
+            ? item.query.substring(0, 47) + '...' 
+            : item.query;
+        
         historyItem.innerHTML = `
-            <div class="history-query" title="${item.query}">
-                ${truncateText(item.query, 30)}
+            <div class="history-content">
+                <div class="history-query" title="${item.query.replace(/"/g, '&quot;')}">
+                    "${displayQuery}"
+                </div>
+                <div class="history-info">
+                    <span class="history-date">${formatDate(item.timestamp)}</span>
+                    <span class="history-results">${item.resultCount} résultat(s)</span>
+                </div>
             </div>
-            <div class="history-date">
-                ${formatDate(item.timestamp)}
-            </div>
-            <button class="history-remove" data-index="${index}" title="Supprimer">
+            <button class="history-remove" data-index="${index}" title="Supprimer cette recherche">
                 <i class="fas fa-times"></i>
             </button>
         `;
         
         // Événement pour recharger la recherche
-        historyItem.querySelector('.history-query').addEventListener('click', () => {
-            document.getElementById('searchInput').value = item.query;
-            performSearch();
+        historyItem.addEventListener('click', (e) => {
+            if (!e.target.closest('.history-remove')) {
+                document.getElementById('searchInput').value = item.query;
+                performSearch();
+            }
         });
         
         // Événement pour supprimer de l'historique
@@ -1160,6 +1240,45 @@ function updateSearchHistory() {
         historyList.appendChild(historyItem);
     });
 }
+
+// Ajouter cette fonction pour effacer tout l'historique
+function clearSearchHistory() {
+    showConfirmModal(
+        'Effacer l\'historique',
+        'Êtes-vous sûr de vouloir effacer tout l\'historique des recherches ?',
+        () => {
+            searchHistory = [];
+            localStorage.removeItem('searchHistory');
+            updateSearchHistory();
+        }
+    );
+}
+
+// Ajouter cette fonction pour améliorer l'expérience utilisateur
+function enhanceSearchExperience() {
+    const searchInput = document.getElementById('searchInput');
+    
+    // Focus sur le champ de recherche quand on appuie sur Ctrl+K
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            searchInput.focus();
+        }
+        
+        // Effacer la recherche avec Escape
+        if (e.key === 'Escape' && document.activeElement === searchInput) {
+            searchInput.value = '';
+            performSearch();
+        }
+    });
+    
+    // Afficher un placeholder avancé
+    searchInput.placeholder = 'Ex: (image OR vidéo) #vacances NOT #travail • Ctrl+K pour focus';
+}
+
+// Ajouter l'événement pour le bouton d'effacement
+document.getElementById('clearHistoryBtn').addEventListener('click', clearSearchHistory);
+
 // Ajouter cette fonction pour formater la date
 function formatDate(timestamp) {
     const date = new Date(timestamp);
@@ -1176,7 +1295,8 @@ function formatDate(timestamp) {
 }
 // Ajouter cette fonction pour tronquer le texte
 function truncateText(text, maxLength) {
-    return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+    if (text.length <= maxLength) return text;
+    return text.substring(0, maxLength) + '...';
 }
 
 // Ajouter cette fonction pour supprimer de l'historique
@@ -1310,6 +1430,7 @@ document.getElementById('loadDataBtn').addEventListener('click', loadData);
 // Ajouter l'appel au chargement de l'historique au démarrage
 document.addEventListener('DOMContentLoaded', function() {
     loadSearchHistory();
+    enhanceSearchExperience();
     // ... le reste de l'initialisation ...
 });
 initSampleData();
