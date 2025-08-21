@@ -528,6 +528,10 @@ function performSearch() {
     const resultsCount = document.getElementById('resultsCount');
     const resultsTitle = document.getElementById('resultsTitle');
     const sortOption = document.getElementById('sortSelect').value;
+    // Ajouter à l'historique après la recherche
+    if (query.trim()) {
+        addToSearchHistory(query);
+    }
     
     let results = [];
     
@@ -935,6 +939,19 @@ function loadData() {
 // Initialisation avec quelques exemples de données
 function initSampleData() {
     // Ajout de quelques fichiers exemple
+    // Ajouter quelques recherches d'exemple
+    searchHistory = [
+        {
+            query: 'image #vacances',
+            timestamp: new Date(Date.now() - 3600000).toISOString(), // il y a 1 heure
+            resultCount: 2
+        },
+        {
+            query: 'video',
+            timestamp: new Date(Date.now() - 86400000).toISOString(), // il y a 1 jour
+            resultCount: 2
+        }
+    ];
     const sampleFiles = [
         {
             id: generateId('image'),
@@ -1071,6 +1088,128 @@ document.getElementById('previewCheckbox').addEventListener('change', function()
     performSearch();
 });
 
+// Ajouter cette variable globale
+let searchHistory = [];
+
+// Ajouter cette fonction pour gérer l'historique
+function addToSearchHistory(query) {
+    if (!query.trim()) return;
+    
+    // Retirer les doublons
+    searchHistory = searchHistory.filter(item => item.query !== query);
+    
+    // Ajouter la nouvelle recherche en tête
+    searchHistory.unshift({
+        query: query,
+        timestamp: new Date().toISOString(),
+        resultCount: getCurrentResultCount()
+    });
+    
+    // Garder seulement les 5 dernières recherches
+    if (searchHistory.length > 5) {
+        searchHistory = searchHistory.slice(0, 5);
+    }
+    
+    // Sauvegarder dans le localStorage
+    localStorage.setItem('searchHistory', JSON.stringify(searchHistory));
+    
+    // Mettre à jour l'affichage
+    updateSearchHistory();
+}
+// Ajouter cette fonction pour mettre à jour l'affichage de l'historique
+function updateSearchHistory() {
+    const historyList = document.getElementById('historyList');
+    historyList.innerHTML = '';
+    
+    if (searchHistory.length === 0) {
+        historyList.innerHTML = `
+            <div class="empty-history">
+                <p>Aucune recherche récente</p>
+            </div>
+        `;
+        return;
+    }
+    
+    searchHistory.forEach((item, index) => {
+        const historyItem = document.createElement('div');
+        historyItem.className = 'history-item';
+        historyItem.innerHTML = `
+            <div class="history-query" title="${item.query}">
+                ${truncateText(item.query, 30)}
+            </div>
+            <div class="history-date">
+                ${formatDate(item.timestamp)}
+            </div>
+            <button class="history-remove" data-index="${index}" title="Supprimer">
+                <i class="fas fa-times"></i>
+            </button>
+        `;
+        
+        // Événement pour recharger la recherche
+        historyItem.querySelector('.history-query').addEventListener('click', () => {
+            document.getElementById('searchInput').value = item.query;
+            performSearch();
+        });
+        
+        // Événement pour supprimer de l'historique
+        historyItem.querySelector('.history-remove').addEventListener('click', (e) => {
+            e.stopPropagation();
+            removeFromSearchHistory(index);
+        });
+        
+        historyList.appendChild(historyItem);
+    });
+}
+// Ajouter cette fonction pour formater la date
+function formatDate(timestamp) {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    
+    if (diffMins < 1) return 'à l\'instant';
+    if (diffMins < 60) return `il y a ${diffMins} min`;
+    if (diffHours < 24) return `il y a ${diffHours} h`;
+    
+    return date.toLocaleDateString();
+}
+// Ajouter cette fonction pour tronquer le texte
+function truncateText(text, maxLength) {
+    return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+}
+
+// Ajouter cette fonction pour supprimer de l'historique
+function removeFromSearchHistory(index) {
+    searchHistory.splice(index, 1);
+    localStorage.setItem('searchHistory', JSON.stringify(searchHistory));
+    updateSearchHistory();
+}
+
+// Ajouter cette fonction pour obtenir le nombre de résultats actuels
+function getCurrentResultCount() {
+    const resultsContainer = document.getElementById('resultsContainer');
+    return resultsContainer.querySelectorAll('.file-card').length;
+}
+// Ajouter cette fonction pour charger l'historique au démarrage
+function loadSearchHistory() {
+    const savedHistory = localStorage.getItem('searchHistory');
+    if (savedHistory) {
+        try {
+            searchHistory = JSON.parse(savedHistory);
+            // S'assurer qu'on ne garde que 5 éléments maximum
+            if (searchHistory.length > 5) {
+                searchHistory = searchHistory.slice(0, 5);
+            }
+        } catch (e) {
+            console.error('Erreur lors du chargement de l\'historique:', e);
+            searchHistory = [];
+        }
+    }
+    updateSearchHistory();
+}
+
+
 // Bouton pour basculer entre la vue grille et la vue liste
 document.getElementById('toggleViewBtn').addEventListener('click', function() {
     isListView = !isListView;
@@ -1168,4 +1307,9 @@ document.getElementById('saveDataBtn').addEventListener('click', saveData);
 document.getElementById('loadDataBtn').addEventListener('click', loadData);
 
 // Initialisation
-// initSampleData();
+// Ajouter l'appel au chargement de l'historique au démarrage
+document.addEventListener('DOMContentLoaded', function() {
+    loadSearchHistory();
+    // ... le reste de l'initialisation ...
+});
+initSampleData();
