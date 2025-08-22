@@ -1007,32 +1007,9 @@ function loadData() {
 }
 
 // Initialisation avec quelques exemples de données
+// Initialisation avec quelques exemples de données
 function initSampleData() {
     // Ajout de quelques fichiers exemple
-    // Ajouter quelques recherches d'exemple
-    // Ajouter des recherches d'exemple réalistes
-    searchHistory = [
-        {
-            query: 'image vacances',
-            timestamp: new Date(Date.now() - 3600000).toISOString(),
-            resultCount: 3
-        },
-        {
-            query: 'video randonnée',
-            timestamp: new Date(Date.now() - 86400000).toISOString(),
-            resultCount: 1
-        },
-        {
-            query: 'image not(video)',
-            timestamp: new Date(Date.now() - 3600000).toISOString(),
-            resultCount: 3
-        },
-        {
-            query: 'document travail',
-            timestamp: new Date(Date.now() - 259200000).toISOString(),
-            resultCount: 1
-        }
-    ];
     const sampleFiles = [
         {
             id: generateId('image'),
@@ -1146,10 +1123,38 @@ function initSampleData() {
     sampleFiles[4].collections = [collections[0].id, collections[2].id];
     sampleFiles[5].collections = [collections[2].id];
     
+    // Ajouter des recherches d'exemple dans l'historique
+    searchHistory = [
+        {
+            query: 'image vacances',
+            timestamp: new Date(Date.now() - 3600000).toISOString(),
+            resultCount: 3
+        },
+        {
+            query: 'video randonnée',
+            timestamp: new Date(Date.now() - 86400000).toISOString(),
+            resultCount: 1
+        },
+        {
+            query: 'image not(video)',
+            timestamp: new Date(Date.now() - 3600000).toISOString(),
+            resultCount: 3
+        },
+        {
+            query: 'document travail',
+            timestamp: new Date(Date.now() - 259200000).toISOString(),
+            resultCount: 1
+        }
+    ];
+    
+    // Sauvegarder l'historique d'exemple dans le localStorage
+    localStorage.setItem('searchHistory', JSON.stringify(searchHistory));
+    
     // Affichage initial
     updateCollectionsList();
     updateCollectionsSelect();
     updateTagsCloud();
+    updateSearchHistory(); // Mettre à jour l'affichage de l'historique
     displayFiles(files);
     document.getElementById('resultsCount').textContent = `(${files.length} résultats)`;
 }
@@ -1355,6 +1360,9 @@ function loadSearchHistory() {
             console.error('Erreur lors du chargement de l\'historique:', e);
             searchHistory = [];
         }
+    } else {
+        // Si pas d'historique sauvegardé, initialiser avec un tableau vide
+        searchHistory = [];
     }
     updateSearchHistory();
 }
@@ -1463,4 +1471,5 @@ document.addEventListener('DOMContentLoaded', function() {
     enhanceSearchExperience();
     // ... le reste de l'initialisation ...
 });
-initSampleData();
+// initSampleData();
+searchHistory = []
