@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QTextEdit, QComboBox, QFileDialog, QMessageBox, QSplitter,
                              QTreeWidget, QTreeWidgetItem, QTabWidget, QGroupBox, QDialog)
 from PyQt5.QtCore import Qt, QUrl, QSettings
-from PyQt5.QtGui import QIcon, QFont, QDesktopServices
+from PyQt5.QtGui import QIcon, QFont, QDesktopServices, QPixmap
 
 class Config:
     """Classe de configuration pour gérer les préférences"""
@@ -373,6 +373,101 @@ class AddFileDialog(QDialog):
             "location": self.location_input.text()
         }
 
+class PreviewWidget(QWidget):
+    """Widget pour afficher la prévisualisation des fichiers"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.init_ui()
+    
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Titre
+        self.title_label = QLabel("Prévisualisation")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        layout.addWidget(self.title_label)
+        
+        # Zone de prévisualisation
+        self.preview_area = QLabel()
+        self.preview_area.setAlignment(Qt.AlignCenter)
+        self.preview_area.setMinimumSize(300, 200)
+        self.preview_area.setStyleSheet("""
+            QLabel {
+                border: 2px dashed #ccc;
+                background-color: #f8f9fa;
+                border-radius: 5px;
+            }
+        """)
+        self.preview_area.setText("Aucune prévisualisation disponible")
+        layout.addWidget(self.preview_area)
+        
+        # Informations supplémentaires
+        self.info_label = QLabel()
+        self.info_label.setAlignment(Qt.AlignCenter)
+        self.info_label.setWordWrap(True)
+        layout.addWidget(self.info_label)
+    
+    def clear_preview(self):
+        """Efface la prévisualisation"""
+        self.preview_area.clear()
+        self.preview_area.setText("Aucune prévisualisation disponible")
+        self.info_label.clear()
+    
+    def set_preview(self, obj: FileObject):
+        """Définit la prévisualisation pour un objet"""
+        self.clear_preview()
+        
+        if obj.is_external():
+            # Pour les URLs externes
+            self.preview_area.setText("🌐 Lien externe\n\nCliquez sur 'Ouvrir l'emplacement' pour visiter le site")
+            self.info_label.setText(f"URL: {obj.location}")
+        else:
+            # Pour les fichiers locaux
+            file_path = obj.location
+            if os.path.exists(file_path):
+                file_ext = os.path.splitext(file_path)[1].lower()
+                
+                # Prévisualisation des images
+                if file_ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']:
+                    try:
+                        pixmap = QPixmap(file_path)
+                        if not pixmap.isNull():
+                            # Redimensionner pour s'adapter à la zone de prévisualisation
+                            scaled_pixmap = pixmap.scaled(
+                                self.preview_area.width() - 20,
+                                self.preview_area.height() - 20,
+                                Qt.KeepAspectRatio,
+                                Qt.SmoothTransformation
+                            )
+                            self.preview_area.setPixmap(scaled_pixmap)
+                            self.info_label.setText(f"Image: {os.path.basename(file_path)}\nTaille: {pixmap.width()}x{pixmap.height()}")
+                        else:
+                            self.preview_area.setText("❌ Impossible de charger l'image")
+                    except Exception as e:
+                        self.preview_area.setText("❌ Erreur de chargement")
+                        self.info_label.setText(str(e))
+                
+                # Autres types de fichiers
+                elif file_ext in ['.mp4', '.avi', '.mov', '.wmv']:
+                    self.preview_area.setText("🎥 Fichier vidéo\n\nPrévisualisation non disponible")
+                    self.info_label.setText(f"Vidéo: {os.path.basename(file_path)}")
+                
+                elif file_ext in ['.mp3', '.wav', '.flac', '.aac']:
+                    self.preview_area.setText("🎵 Fichier audio\n\nPrévisualisation non disponible")
+                    self.info_label.setText(f"Audio: {os.path.basename(file_path)}")
+                
+                elif file_ext in ['.pdf', '.doc', '.docx', '.txt', '.rtf']:
+                    self.preview_area.setText("📄 Document\n\nPrévisualisation non disponible")
+                    self.info_label.setText(f"Document: {os.path.basename(file_path)}")
+                
+                else:
+                    self.preview_area.setText("📁 Fichier\n\nType non supporté pour la prévisualisation")
+                    self.info_label.setText(f"Fichier: {os.path.basename(file_path)}")
+            else:
+                self.preview_area.setText("❌ Fichier introuvable")
+                self.info_label.setText(f"Le fichier n'existe pas à l'emplacement:\n{file_path}")
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -384,7 +479,7 @@ class MainWindow(QMainWindow):
     
     def init_ui(self):
         self.setWindowTitle("Gestionnaire de Fichiers par Tags")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, 1400, 800)  # Augmenté la largeur pour accommoder la prévisualisation
         
         # Widget central et layout principal
         central_widget = QWidget()
@@ -417,9 +512,9 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(QLabel("Résultats:"))
         left_layout.addWidget(self.results_list)
         
-        # Panel droit pour les détails et gestion des tags
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
+        # Panel central pour les détails et gestion des tags
+        center_panel = QWidget()
+        center_layout = QVBoxLayout(center_panel)
         
         # Détails de l'objet
         details_group = QGroupBox("Détails de l'objet")
@@ -475,14 +570,23 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(add_file_button)
         button_layout.addWidget(remove_tag_button)
         
-        right_layout.addWidget(details_group)
-        right_layout.addWidget(tags_group)
-        right_layout.addLayout(button_layout)
+        center_layout.addWidget(details_group)
+        center_layout.addWidget(tags_group)
+        center_layout.addLayout(button_layout)
+        
+        # Panel droit pour la prévisualisation
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        
+        # Widget de prévisualisation
+        self.preview_widget = PreviewWidget()
+        right_layout.addWidget(self.preview_widget)
         
         # Ajouter les panels au splitter
         splitter.addWidget(left_panel)
+        splitter.addWidget(center_panel)
         splitter.addWidget(right_panel)
-        splitter.setSizes([400, 800])
+        splitter.setSizes([300, 500, 400])  # Ajuster les tailles des panels
         
         main_layout.addWidget(splitter)
         
@@ -559,6 +663,9 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(f"{obj.name} ({obj.file_type})")
             item.setData(Qt.UserRole, obj.id)
             self.results_list.addItem(item)
+        
+        # Effacer la prévisualisation
+        self.preview_widget.clear_preview()
     
     def perform_search(self):
         """Effectue une recherche en fonction du texte saisi"""
@@ -590,6 +697,10 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(f"{obj.name} ({obj.file_type})")
             item.setData(Qt.UserRole, obj.id)
             self.results_list.addItem(item)
+        
+        # Effacer la prévisualisation si aucun résultat
+        if not results:
+            self.preview_widget.clear_preview()
     
     def display_object_details(self, item):
         """Affiche les détails de l'objet sélectionné"""
@@ -621,6 +732,12 @@ class MainWindow(QMainWindow):
             tags = self.db.get_object_tags(obj_id)
             for tag in tags:
                 self.tags_list.addItem(f"#{tag}")
+            
+            # Afficher la prévisualisation
+            self.preview_widget.set_preview(self.current_object)
+        else:
+            # Effacer la prévisualisation si l'objet n'est pas trouvé
+            self.preview_widget.clear_preview()
     
     def open_current_object_location(self):
         """Ouvre l'emplacement de l'objet courant"""
@@ -727,7 +844,8 @@ class MainWindow(QMainWindow):
                          f"Dossier de données actuel: {data_dir}\n\n"
                          f"Les emplacements peuvent être:\n"
                          f"- Internes: chemins vers des fichiers locaux\n"
-                         f"- Externes: URLs web (http://, https://)")
+                         f"- Externes: URLs web (http://, https://)\n\n"
+                         f"Nouveau: Prévisualisation des images et informations détaillées!")
 
 # Point d'entrée de l'application
 if __name__ == "__main__":
