@@ -1464,6 +1464,20 @@ document.getElementById('saveDataBtn').addEventListener('click', saveData);
 // Charger les données
 document.getElementById('loadDataBtn').addEventListener('click', loadData);
 
+// Sélectionner un fichier local et remplir le champ d'emplacement
+document.getElementById('selectFileBtn').addEventListener('click', function() {
+    document.getElementById('hiddenFileInput').click();
+});
+
+document.getElementById('hiddenFileInput').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (file) {
+        // Utilisation d'un objet URL pour l'affichage local (non persistant)
+        const fileUrl = URL.createObjectURL(file);
+        document.getElementById('fileLocation').value = fileUrl;
+    }
+});
+
 // Initialisation
 // Ajouter l'appel au chargement de l'historique au démarrage
 document.addEventListener('DOMContentLoaded', function() {
@@ -1472,4 +1486,4 @@ document.addEventListener('DOMContentLoaded', function() {
     // ... le reste de l'initialisation ...
 });
 // initSampleData();
-searchHistory = []
+// searchHistory = []
