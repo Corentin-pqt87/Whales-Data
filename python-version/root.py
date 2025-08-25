@@ -6,7 +6,8 @@ from typing import List, Dict, Set, Optional
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLineEdit, QPushButton, QListWidget, QListWidgetItem, QLabel, 
                              QTextEdit, QComboBox, QFileDialog, QMessageBox, QSplitter,
-                             QTreeWidget, QTreeWidgetItem, QTabWidget, QGroupBox, QDialog)
+                             QTreeWidget, QTreeWidgetItem, QTabWidget, QGroupBox, QDialog,
+                             QMenu, QAction)
 from PyQt5.QtCore import Qt, QUrl, QSettings
 from PyQt5.QtGui import QIcon, QFont, QDesktopServices, QPixmap
 
@@ -141,6 +142,42 @@ class TagDatabase:
         self.save_object(obj)
         return obj.id
     
+    def update_object(self, obj_id: str, name: str, description: str, file_type: str, location: str) -> bool:
+        """Met à jour un objet existant"""
+        if obj_id not in self.objects:
+            return False
+        
+        # Mettre à jour les propriétés de l'objet
+        self.objects[obj_id].name = name
+        self.objects[obj_id].description = description
+        self.objects[obj_id].file_type = file_type
+        self.objects[obj_id].location = location
+        
+        # Sauvegarder les modifications
+        self.save_object(self.objects[obj_id])
+        return True
+    
+    def delete_object(self, obj_id: str) -> bool:
+        """Supprime un objet de la base de données"""
+        if obj_id not in self.objects:
+            return False
+        
+        # Retirer l'objet de tous les tags
+        for tag in self.get_object_tags(obj_id):
+            self.remove_tag(obj_id, tag)
+        
+        # Supprimer le fichier de l'objet
+        obj_file = os.path.join(self.data_dir, f"{obj_id}.json")
+        if os.path.exists(obj_file):
+            try:
+                os.remove(obj_file)
+            except Exception as e:
+                print(f"Erreur lors de la suppression du fichier {obj_file}: {e}")
+        
+        # Retirer l'objet de la mémoire
+        del self.objects[obj_id]
+        return True
+    
     def save_object(self, obj: FileObject) -> None:
         """Sauvegarde un objet dans un fichier JSON"""
         obj_path = os.path.join(self.data_dir, f"{obj.id}.json")
@@ -190,7 +227,7 @@ class TagDatabase:
         return results
     
     def search_by_tag(self, tag: str) -> List[FileObject]:
-        """Recherche des objets par tag"""
+        """Recherche des objets por tag"""
         clean_tag = tag.lstrip('#')
         if clean_tag not in self.tags:
             return []
@@ -278,11 +315,17 @@ class FirstRunDialog(QDialog):
         """Retourne le dossier de données choisi"""
         return self.folder_input.text()
 
-class AddFileDialog(QDialog):
-    """Boîte de dialogue pour ajouter un nouveau fichier"""
-    def __init__(self, parent=None):
+class FileDialog(QDialog):
+    """Boîte de dialogue pour ajouter ou modifier un fichier"""
+    def __init__(self, parent=None, obj=None):
         super().__init__(parent)
-        self.setWindowTitle("Ajouter un nouveau fichier")
+        self.obj = obj
+        if obj:
+            self.setWindowTitle("Modifier le fichier")
+            self.is_edit = True
+        else:
+            self.setWindowTitle("Ajouter un nouveau fichier")
+            self.is_edit = False
         self.setModal(True)
         self.init_ui()
     
@@ -344,6 +387,19 @@ class AddFileDialog(QDialog):
         
         layout.addLayout(form_layout)
         layout.addLayout(button_layout)
+        
+        # Remplir les champs si on est en mode édition
+        if self.is_edit and self.obj:
+            self.name_input.setText(self.obj.name)
+            self.description_input.setPlainText(self.obj.description)
+            self.type_combo.setCurrentText(self.obj.file_type)
+            
+            if self.obj.is_external():
+                self.location_type_combo.setCurrentText("Externe (URL web)")
+            else:
+                self.location_type_combo.setCurrentText("Interne (fichier local)")
+            
+            self.location_input.setText(self.obj.location)
         
         # Initialiser l'interface
         self.update_location_field()
@@ -503,10 +559,12 @@ class MainWindow(QMainWindow):
         search_layout.addWidget(self.search_input)
         search_layout.addWidget(search_button)
         
-        # Liste des résultats
+        # Liste des résultats avec menu contextuel
         self.results_list = QListWidget()
         self.results_list.itemClicked.connect(self.display_object_details)
         self.results_list.itemDoubleClicked.connect(self.open_object_location)
+        self.results_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.results_list.customContextMenuRequested.connect(self.show_context_menu)
         
         left_layout.addLayout(search_layout)
         left_layout.addWidget(QLabel("Résultats:"))
@@ -529,13 +587,23 @@ class MainWindow(QMainWindow):
         self.open_location_button.clicked.connect(self.open_current_object_location)
         self.open_location_button.setEnabled(False)
         
+        # Bouton pour modifier l'objet
+        self.edit_button = QPushButton("Modifier cet élément")
+        self.edit_button.clicked.connect(self.edit_current_object)
+        self.edit_button.setEnabled(False)
+        
         self.description_view = QTextEdit()
         self.description_view.setReadOnly(True)
         
         details_layout.addWidget(self.name_label)
         details_layout.addWidget(self.type_label)
         details_layout.addWidget(self.location_label)
-        details_layout.addWidget(self.open_location_button)
+        
+        button_details_layout = QHBoxLayout()
+        button_details_layout.addWidget(self.open_location_button)
+        button_details_layout.addWidget(self.edit_button)
+        details_layout.addLayout(button_details_layout)
+        
         details_layout.addWidget(QLabel("Description:"))
         details_layout.addWidget(self.description_view)
         details_group.setLayout(details_layout)
@@ -610,11 +678,39 @@ class MainWindow(QMainWindow):
         exit_action = file_menu.addAction("Quitter")
         exit_action.triggered.connect(self.close)
         
+        # Menu Édition
+        edit_menu = menu_bar.addMenu("Édition")
+        
+        edit_action = edit_menu.addAction("Modifier l'élément sélectionné")
+        edit_action.triggered.connect(self.edit_current_object)
+        
+        delete_action = edit_menu.addAction("Supprimer l'élément sélectionné")
+        delete_action.triggered.connect(self.delete_current_object)
+        
         # Menu Aide
         help_menu = menu_bar.addMenu("Aide")
         
         about_action = help_menu.addAction("À propos")
         about_action.triggered.connect(self.show_about)
+    
+    def show_context_menu(self, position):
+        """Affiche le menu contextuel pour la liste des résultats"""
+        if not self.db:
+            return
+            
+        item = self.results_list.itemAt(position)
+        if not item:
+            return
+            
+        menu = QMenu()
+        
+        edit_action = menu.addAction("Modifier")
+        edit_action.triggered.connect(lambda: self.edit_object(item))
+        
+        delete_action = menu.addAction("Supprimer")
+        delete_action.triggered.connect(lambda: self.delete_object(item))
+        
+        menu.exec_(self.results_list.mapToGlobal(position))
     
     def load_database(self):
         """Charge la base de données"""
@@ -664,8 +760,11 @@ class MainWindow(QMainWindow):
             item.setData(Qt.UserRole, obj.id)
             self.results_list.addItem(item)
         
-        # Effacer la prévisualisation
+        # Effacer la prévisualisation et désactiver les boutons
         self.preview_widget.clear_preview()
+        self.open_location_button.setEnabled(False)
+        self.edit_button.setEnabled(False)
+        self.current_object = None
     
     def perform_search(self):
         """Effectue une recherche en fonction du texte saisi"""
@@ -701,6 +800,8 @@ class MainWindow(QMainWindow):
         # Effacer la prévisualisation si aucun résultat
         if not results:
             self.preview_widget.clear_preview()
+            self.open_location_button.setEnabled(False)
+            self.edit_button.setEnabled(False)
     
     def display_object_details(self, item):
         """Affiche les détails de l'objet sélectionné"""
@@ -724,8 +825,9 @@ class MainWindow(QMainWindow):
             self.location_label.setText(location_text)
             self.description_view.setText(self.current_object.description)
             
-            # Activer le bouton d'ouverture
+            # Activer les boutons
             self.open_location_button.setEnabled(True)
+            self.edit_button.setEnabled(True)
             
             # Charger les tags associés
             self.tags_list.clear()
@@ -738,6 +840,8 @@ class MainWindow(QMainWindow):
         else:
             # Effacer la prévisualisation si l'objet n'est pas trouvé
             self.preview_widget.clear_preview()
+            self.open_location_button.setEnabled(False)
+            self.edit_button.setEnabled(False)
     
     def open_current_object_location(self):
         """Ouvre l'emplacement de l'objet courant"""
@@ -800,7 +904,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Erreur", "Aucune base de données n'est ouverte.")
             return
             
-        dialog = AddFileDialog(self)
+        dialog = FileDialog(self)
         
         if dialog.exec() == QDialog.Accepted:
             data = dialog.get_data()
@@ -833,6 +937,115 @@ class MainWindow(QMainWindow):
             
             QMessageBox.information(self, "Succès", "Fichier ajouté avec succès.")
     
+    def edit_current_object(self):
+        """Modifie l'objet courant"""
+        if not self.current_object:
+            QMessageBox.warning(self, "Erreur", "Aucun objet sélectionné.")
+            return
+            
+        self.edit_object_by_id(self.current_object.id)
+    
+    def edit_object(self, item):
+        """Modifie l'objet sélectionné dans la liste"""
+        if not item:
+            return
+            
+        obj_id = item.data(Qt.UserRole)
+        self.edit_object_by_id(obj_id)
+    
+    def edit_object_by_id(self, obj_id):
+        """Modifie un objet par son ID"""
+        if not self.db:
+            QMessageBox.warning(self, "Erreur", "Aucune base de données n'est ouverte.")
+            return
+            
+        obj = self.db.objects.get(obj_id)
+        if not obj:
+            QMessageBox.warning(self, "Erreur", "Objet introuvable.")
+            return
+        
+        dialog = FileDialog(self, obj)
+        
+        if dialog.exec() == QDialog.Accepted:
+            data = dialog.get_data()
+            
+            # Validation de l'emplacement
+            location = data["location"].strip()
+            location_type = dialog.location_type_combo.currentText()
+            
+            if location_type == "Interne (fichier local)" and not os.path.exists(location):
+                QMessageBox.warning(self, "Erreur", "Le fichier spécifié n'existe pas.")
+                return
+            
+            if location_type == "Externe (URL web)" and not location.startswith(('http://', 'https://')):
+                QMessageBox.warning(self, "Erreur", "L'URL doit commencer par http:// ou https://")
+                return
+            
+            # Mettre à jour l'objet
+            success = self.db.update_object(
+                obj_id,
+                data["name"],
+                data["description"],
+                data["type"],
+                location
+            )
+            
+            if success:
+                # Mettre à jour l'interface
+                self.load_all_objects()
+                QMessageBox.information(self, "Succès", "Fichier modifié avec succès.")
+            else:
+                QMessageBox.warning(self, "Erreur", "Impossible de modifier le fichier.")
+    
+    def delete_current_object(self):
+        """Supprime l'objet courant"""
+        if not self.current_object:
+            QMessageBox.warning(self, "Erreur", "Aucun objet sélectionné.")
+            return
+            
+        reply = QMessageBox.question(
+            self,
+            "Confirmation",
+            f"Êtes-vous sûr de vouloir supprimer '{self.current_object.name}' ?\nCette action est irréversible.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            success = self.db.delete_object(self.current_object.id)
+            if success:
+                self.load_all_objects()
+                QMessageBox.information(self, "Succès", "Fichier supprimé avec succès.")
+            else:
+                QMessageBox.warning(self, "Erreur", "Impossible de supprimer le fichier.")
+    
+    def delete_object(self, item):
+        """Supprime l'objet sélectionné dans la liste"""
+        if not item:
+            return
+            
+        obj_id = item.data(Qt.UserRole)
+        obj = self.db.objects.get(obj_id)
+        
+        if not obj:
+            return
+            
+        reply = QMessageBox.question(
+            self,
+            "Confirmation",
+            f"Êtes-vous sûr de vouloir supprimer '{obj.name}' ?\nCette action est irréversible.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            success = self.db.delete_object(obj_id)
+            if success:
+                self.load_all_objects()
+                QMessageBox.information(self, "Succès", "Fichier supprimé avec succès.")
+            else:
+                QMessageBox.warning(self, "Erreur", "Impossible de supprimer le fichier.")
+    
     def show_about(self):
         """Affiche la boîte de dialogue À propos"""
         data_dir = self.config.get_data_dir() if self.db else "Non spécifié"
@@ -845,7 +1058,7 @@ class MainWindow(QMainWindow):
                          f"Les emplacements peuvent être:\n"
                          f"- Internes: chemins vers des fichiers locaux\n"
                          f"- Externes: URLs web (http://, https://)\n\n"
-                         f"Nouveau: Prévisualisation des images et informations détaillées!")
+                         f"Nouveau: Prévisualisation des images et modification des éléments!")
 
 # Point d'entrée de l'application
 if __name__ == "__main__":
