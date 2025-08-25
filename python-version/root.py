@@ -219,16 +219,21 @@ class TagDatabase:
                 json.dump(list(self.tags[tag]), f, ensure_ascii=False, indent=4)
     
     def search_by_name(self, name: str) -> List[FileObject]:
-        """Recherche des objets par nom"""
+        """Recherche des objets par nom (recherche partielle insensible à la casse)"""
         results = []
+        search_terms = name.lower().split()
+        
         for obj in self.objects.values():
-            if name.lower() in obj.name.lower():
+            obj_name_lower = obj.name.lower()
+            # Vérifie si tous les termes de recherche sont présents dans le nom
+            if all(term in obj_name_lower for term in search_terms):
                 results.append(obj)
+        
         return results
     
     def search_by_tag(self, tag: str) -> List[FileObject]:
-        """Recherche des objets por tag"""
-        clean_tag = tag.lstrip('#')
+        """Recherche des objets par tag"""
+        clean_tag = tag.lstrip('#').strip().replace(' ', '_')
         if clean_tag not in self.tags:
             return []
         
@@ -248,6 +253,10 @@ class TagDatabase:
     
     def advanced_search(self, query: str) -> List[FileObject]:
         """Recherche avancée avec syntaxe complexe"""
+        # Pour les requêtes simples sans opérateurs, utiliser search_by_name
+        if not any(op in query for op in [' OR ', ' AND ', ' NOT ', '(', ')']):
+            return self.search_by_name(query)
+        
         # Cette implémentation est simplifiée pour le prototype
         # Une version complète nécessiterait un parser plus sophistiqué
         
@@ -258,7 +267,7 @@ class TagDatabase:
         for term in terms:
             # Gérer la négation (NOT)
             if term.startswith('not(') and term.endswith(')'):
-                negated_term = term[4:-1]
+                negated_term = term[4:-1].strip()
                 # Implémenter la logique d'exclusion
                 continue
             
@@ -772,22 +781,62 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Erreur", "Aucune base de données n'est ouverte.")
             return
             
-        query = self.search_input.text()
+        query = self.search_input.text().strip()
         if not query:
             self.load_all_objects()
             return
         
         results = []
         
-        # Recherche par tag si le texte commence par #
-        if query.startswith('#'):
-            results = self.db.search_by_tag(query)
+        # Vérifier si la requête contient des tags (#)
+        if '#' in query:
+            # Séparer les termes de recherche
+            search_terms = query.split()
+            tag_terms = []
+            name_terms = []
+            
+            # Séparer les tags et les termes de nom
+            for term in search_terms:
+                if term.startswith('#'):
+                    tag_terms.append(term)
+                else:
+                    name_terms.append(term)
+            
+            # Recherche par tags
+            tag_results = []
+            if tag_terms:
+                for tag_term in tag_terms:
+                    tag_results.extend(self.db.search_by_tag(tag_term))
+                
+                # Si plusieurs tags, intersection (ET logique)
+                if len(tag_terms) > 1:
+                    temp_results = []
+                    for obj in tag_results:
+                        if tag_results.count(obj) == len(tag_terms):
+                            temp_results.append(obj)
+                    tag_results = list(set(temp_results))
+            
+            # Recherche par nom
+            name_results = []
+            if name_terms:
+                name_query = ' '.join(name_terms)
+                name_results = self.db.search_by_name(name_query)
+            
+            # Combiner les résultats
+            if tag_results and name_results:
+                # Intersection des résultats tags et noms
+                results = [obj for obj in tag_results if obj in name_results]
+            elif tag_results:
+                results = tag_results
+            elif name_results:
+                results = name_results
+        
         else:
             # Recherche avancée pour les requêtes complexes
             if any(op in query for op in [' OR ', ' AND ', ' NOT ', '(', ')']):
                 results = self.db.advanced_search(query)
             else:
-                # Recherche simple par nom
+                # Recherche par nom avec plusieurs mots (ET logique)
                 results = self.db.search_by_name(query)
         
         # Afficher les résultats
@@ -796,6 +845,12 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem(f"{obj.name} ({obj.file_type})")
             item.setData(Qt.UserRole, obj.id)
             self.results_list.addItem(item)
+        
+        # Afficher le nombre de résultats
+        if results:
+            count_item = QListWidgetItem(f"--- {len(results)} résultat(s) trouvé(s) ---")
+            count_item.setFlags(Qt.NoItemFlags)  # Rendre l'item non sélectionnable
+            self.results_list.addItem(count_item)
         
         # Effacer la prévisualisation si aucun résultat
         if not results:
