@@ -4,7 +4,7 @@ import uuid
 import re
 import datetime
 from collections import deque
-from typing import List, Dict, Set, Optional
+from typing import List, Dict, Set, Optional, Union
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLineEdit, QPushButton, QListWidget, QListWidgetItem, QLabel, 
                              QTextEdit, QComboBox, QFileDialog, QMessageBox, QSplitter,
@@ -320,32 +320,33 @@ class TagDatabase:
         return tags
     
     def advanced_search(self, query: str) -> List[FileObject]:
-        """Recherche avancée avec syntaxe complexe"""
-        # Pour les requêtes simples sans opérateurs, utiliser search_by_name
-        if not any(op in query for op in [' OR ', ' AND ', ' NOT ', '(', ')']):
-            return self.search_by_name(query)
+        """Recherche avancée avec syntaxe booléenne complète"""
+        if not query.strip():
+            return list(self.objects.values())
         
-        # Cette implémentation est simplifiée pour le prototype
-        # Une version complète nécessiterait un parser plus sophistiqué
-        
-        # Séparer les termes de recherche
-        terms = re.split(r'\s+(?:OR|AND|,)\s+', query)
-        
-        results = []
-        for term in terms:
-            # Gérer la négation (NOT)
-            if term.startswith('not(') and term.endswith(')'):
-                negated_term = term[4:-1].strip()
-                # Implémenter la logique d'exclusion
-                continue
+        try:
+            # Debug: afficher la requête parsée
+            parsed_query = self.parse_boolean_query(query)
+            print(f"Requête parsée: {parsed_query}")
             
-            # Gérer les tags (commençant par #)
-            if term.startswith('#'):
-                results.extend(self.search_by_tag(term))
-            else:
-                results.extend(self.search_by_name(term))
-        
-        return list(set(results))  # Éliminer les doublons
+            # Évaluer la requête
+            result_ids = self.evaluate_boolean_expression(parsed_query)
+            
+            # Convertir les IDs en objets
+            results = []
+            for obj_id in result_ids:
+                if obj_id in self.objects:
+                    results.append(self.objects[obj_id])
+            
+            print(f"Résultats trouvés: {len(results)}")
+            return results
+            
+        except Exception as e:
+            print(f"Erreur dans la recherche avancée: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback vers la recherche simple
+            return self.search_by_name(query)
 
     def location_exists(self, location: str) -> bool:
         """Vérifie si un emplacement existe déjà dans la base de données"""
@@ -361,6 +362,187 @@ class TagDatabase:
                 return obj
         return None
     
+    def advanced_search(self, query: str) -> List[FileObject]:
+        """Recherche avancée avec syntaxe booléenne complète"""
+        if not query.strip():
+            return list(self.objects.values())
+        
+        try:
+            # Parser la requête booléenne
+            parsed_query = self.parse_boolean_query(query)
+            
+            # Évaluer la requête
+            result_ids = self.evaluate_boolean_expression(parsed_query)
+            
+            # Convertir les IDs en objets
+            results = []
+            for obj_id in result_ids:
+                if obj_id in self.objects:
+                    results.append(self.objects[obj_id])
+            
+            return results
+            
+        except Exception as e:
+            print(f"Erreur dans la recherche avancée: {e}")
+            # Fallback vers la recherche simple
+            return self.search_by_name(query)
+    
+    def parse_boolean_query(self, query: str) -> Union[str, dict]:
+        """
+        Parse une requête booléenne en arbre syntaxique
+        Format: {"operator": "AND/OR/NOT", "operands": [operand1, operand2, ...]}
+        """
+        query = query.strip()
+        
+        # Gérer les parenthèses
+        if query.startswith('(') and query.endswith(')'):
+            return self.parse_boolean_query(query[1:-1])
+        
+        # Chercher les opérateurs en respectant la priorité (NOT > AND > OR)
+        # D'abord chercher les opérateurs avec espaces
+        for operator in [' OR ', ' AND ', ' NOT ']:
+            if operator in query:
+                parts = query.split(operator, 1)
+                if len(parts) == 2:
+                    left, right = parts
+                    return {
+                        "operator": operator.strip(),
+                        "operands": [
+                            self.parse_boolean_query(left),
+                            self.parse_boolean_query(right)
+                        ]
+                    }
+        
+        # Ensuite chercher les opérateurs sans espaces (pour la compatibilité)
+        for operator in ['OR', 'AND', 'NOT']:
+            if f" {operator} " in query:  # Éviter les matches dans les mots
+                continue
+            if operator in query:
+                # Vérifier que c'est bien un opérateur et pas une partie d'un mot
+                pattern = r'(?<!\w)' + re.escape(operator) + r'(?!\w)'
+                if re.search(pattern, query):
+                    parts = re.split(pattern, query, 1)
+                    if len(parts) == 2:
+                        left, right = parts
+                        return {
+                            "operator": operator,
+                            "operands": [
+                                self.parse_boolean_query(left),
+                                self.parse_boolean_query(right)
+                            ]
+                        }
+        
+        # Si pas d'opérateur, c'est un terme simple
+        return query.strip()
+    
+    def evaluate_boolean_expression(self, expression: Union[str, dict]) -> Set[str]:
+        """Évalue une expression booléenne et retourne les IDs d'objets correspondants"""
+        if isinstance(expression, str):
+            # Terme simple - recherche par nom ou tag
+            return self.evaluate_simple_term(expression)
+        
+        operator = expression["operator"]
+        operands = expression["operands"]
+        
+        if operator == "NOT":
+            if len(operands) != 2:  # NOT a deux opérandes mais le second est ignoré
+                # Pour gérer "NOT terme" et "terme NOT autre"
+                if len(operands) == 1:
+                    # Cas: NOT terme
+                    result = self.evaluate_boolean_expression(operands[0])
+                    return self.get_all_object_ids() - result
+                else:
+                    raise ValueError("NOT doit avoir un ou deux opérandes")
+            
+            # Cas: terme1 NOT terme2
+            result1 = self.evaluate_boolean_expression(operands[0])
+            result2 = self.evaluate_boolean_expression(operands[1])
+            return result1 - result2
+        
+        elif operator == "AND":
+            if len(operands) < 2:
+                raise ValueError("AND doit avoir au moins deux opérandes")
+            
+            results = []
+            for operand in operands:
+                results.append(self.evaluate_boolean_expression(operand))
+            
+            # Intersection de tous les résultats
+            return set.intersection(*results)
+        
+        elif operator == "OR":
+            if len(operands) < 2:
+                raise ValueError("OR doit avoir au moins deux opérandes")
+            
+            results = set()
+            for operand in operands:
+                results.update(self.evaluate_boolean_expression(operand))
+            
+            return results
+        
+        else:
+            raise ValueError(f"Opérateur inconnu: {operator}")
+    
+    def evaluate_simple_term(self, term: str) -> Set[str]:
+        """Évalue un terme simple (nom ou tag)"""
+        term = term.strip()
+        
+        # Terme entre guillemets (recherche exacte)
+        if term.startswith('"') and term.endswith('"'):
+            exact_term = term[1:-1]
+            return self.search_exact_name(exact_term)
+        
+        # Tag (commence par #)
+        elif term.startswith('#'):
+            tag_name = term[1:].strip()
+            objects = self.search_by_tag(tag_name)
+            return {obj.id for obj in objects}
+        
+        # Recherche par nom (avec wildcards)
+        else:
+            objects = self.search_by_name(term)
+            return {obj.id for obj in objects}
+    
+    def search_exact_name(self, name: str) -> Set[str]:
+        """Recherche exacte par nom (insensible à la casse)"""
+        results = set()
+        name_lower = name.lower()
+        
+        for obj_id, obj in self.objects.items():
+            if obj.name.lower() == name_lower:
+                results.add(obj_id)
+        
+        return results
+    
+    def get_all_object_ids(self) -> Set[str]:
+        """Retourne tous les IDs d'objets"""
+        return set(self.objects.keys())
+    
+    def search_by_name_with_wildcards(self, pattern: str) -> Set[str]:
+        """
+        Recherche par nom avec wildcards (* pour plusieurs caractères, ? pour un caractère)
+        """
+        results = set()
+        pattern_lower = pattern.lower()
+        
+        # Convertir le pattern en regex
+        regex_pattern = pattern_lower.replace('*', '.*').replace('?', '.')
+        regex_pattern = f"^{regex_pattern}$"
+        
+        try:
+            import re
+            regex = re.compile(regex_pattern)
+            
+            for obj_id, obj in self.objects.items():
+                if regex.match(obj.name.lower()):
+                    results.add(obj_id)
+                    
+        except re.error:
+            # Fallback vers la recherche simple si le pattern est invalide
+            return self.evaluate_simple_term(pattern)
+        
+        return results
+
 class ImportFolderDialog(QDialog):
     """Boîte de dialogue pour l'import de dossier avec options"""
     def __init__(self, parent=None):
@@ -692,6 +874,68 @@ class PreviewWidget(QWidget):
             else:
                 self.preview_area.setText("❌ Fichier introuvable")
                 self.info_label.setText(f"Le fichier n'existe pas à l'emplacement:\n{file_path}")
+
+class SearchHelpDialog(QDialog):
+    """Boîte de dialogue d'aide pour la syntaxe de recherche"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Aide sur la syntaxe de recherche")
+        self.setModal(True)
+        self.setMinimumSize(600, 400)
+        self.init_ui()
+    
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        help_text = QTextEdit()
+        help_text.setReadOnly(True)
+        help_text.setHtml("""
+        <h2>Syntaxe de recherche avancée</h2>
+        
+        <h3>Opérateurs booléens:</h3>
+        <ul>
+            <li><b>AND</b> - Intersection: <code>chat AND chien</code></li>
+            <li><b>OR</b> - Union: <code>chat OR chien</code></li>
+            <li><b>NOT</b> - Exclusion: <code>chat NOT chien</code></li>
+        </ul>
+        
+        <h3>Priorité des opérateurs:</h3>
+        <ul>
+            <li>NOT > AND > OR</li>
+            <li>Utilisez les parenthèses pour changer la priorité: <code>(chat OR chien) AND animal</code></li>
+        </ul>
+        
+        <h3>Recherche par tags:</h3>
+        <ul>
+            <li>Utilisez <code>#</code> pour les tags: <code>#vacances #été</code></li>
+            <li>Combine avec les opérateurs: <code>#vacances AND #plage</code></li>
+        </ul>
+        
+        <h3>Recherche exacte:</h3>
+        <ul>
+            <li>Utilisez les guillemets pour la recherche exacte: <code>"mon document.txt"</code></li>
+        </ul>
+        
+        <h3>Wildcards:</h3>
+        <ul>
+            <li><code>*</code> - Zéro ou plusieurs caractères: <code>photo*.jpg</code></li>
+            <li><code>?</code> - Un caractère: <code>image?.png</code></li>
+        </ul>
+        
+        <h3>Exemples:</h3>
+        <ul>
+            <li><code>#vacances AND (photo OR vidéo)</code></li>
+            <li><code>document*.pdf NOT #archives</code></li>
+            <li><code>#travail AND (#important OR #urgent)</code></li>
+        </ul>
+        """)
+        
+        layout.addWidget(help_text)
+        
+        # Bouton de fermeture
+        close_button = QPushButton("Fermer")
+        close_button.clicked.connect(self.accept)
+        layout.addWidget(close_button)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -1306,6 +1550,11 @@ class MainWindow(QMainWindow):
         clear_history_action = search_menu.addAction("Effacer l'historique")
         clear_history_action.triggered.connect(self.clear_search_history)
         
+        search_menu.addSeparator()
+        syntax_help_action = search_menu.addAction("Aide syntaxe recherche")
+        syntax_help_action.triggered.connect(self.show_search_help)
+        
+
         # Menu Tags
         tags_menu = menu_bar.addMenu("Tags")
         
@@ -1327,6 +1576,11 @@ class MainWindow(QMainWindow):
         about_action = help_menu.addAction("À propos")
         about_action.triggered.connect(self.show_about)
     
+    def show_search_help(self):
+        """Affiche l'aide sur la syntaxe de recherche"""
+        dialog = SearchHelpDialog(self)
+        dialog.exec_()
+
     def show_tags_list(self):
         """Affiche une boîte de dialogue avec la liste de tous les tags et leur nombre d'objets"""
         if not self.db:
@@ -1474,76 +1728,44 @@ class MainWindow(QMainWindow):
             self.load_all_objects()
             return
         
-         
+        # Sauvegarder le texte de recherche avant d'ajouter à l'historique
+        search_text = query
+        
         # Ajouter à l'historique
         self.search_history.add_search(query)
         self.update_search_suggestions()
-        self.save_search_history()  # Sauvegarder après chaque recherche
-
-        results = []
+        self.save_search_history()
         
-        # Vérifier si la requête contient des tags (#)
-        if '#' in query:
-            # Séparer les termes de recherche
-            search_terms = query.split()
-            tag_terms = []
-            name_terms = []
-            
-            # Séparer les tags et les termes de nom
-            for term in search_terms:
-                if term.startswith('#'):
-                    tag_terms.append(term)
-                else:
-                    name_terms.append(term)
-            
-            # Recherche par tags
-            tag_results = []
-            if tag_terms:
-                for tag_term in tag_terms:
-                    tag_results.extend(self.db.search_by_tag(tag_term))
-                
-                # Si plusieurs tags, intersection (ET logique)
-                if len(tag_terms) > 1:
-                    temp_results = []
-                    for obj in tag_results:
-                        if tag_results.count(obj) == len(tag_terms):
-                            temp_results.append(obj)
-                    tag_results = list(set(temp_results))
-            
-            # Recherche par nom
-            name_results = []
-            if name_terms:
-                name_query = ' '.join(name_terms)
-                name_results = self.db.search_by_name(name_query)
-            
-            # Combiner les résultats
-            if tag_results and name_results:
-                # Intersection des résultats tags et noms
-                results = [obj for obj in tag_results if obj in name_results]
-            elif tag_results:
-                results = tag_results
-            elif name_results:
-                results = name_results
-        
-        else:
-            # Recherche avancée pour les requêtes complexes
-            if any(op in query for op in [' OR ', ' AND ', ' NOT ', '(', ')']):
-                results = self.db.advanced_search(query)
-            else:
-                # Recherche par nom avec plusieurs mots (ET logique)
-                results = self.db.search_by_name(query)
+        # Utiliser la recherche avancée pour toutes les requêtes
+        results = self.db.advanced_search(query)
         
         # Afficher les résultats
+        self.display_search_results(results, query)
+        
+        # REMETTRE le texte de recherche dans la barre après la recherche
+        self.search_input.setText(search_text)
+        # Positionner le curseur à la fin du texte
+        self.search_input.setCursorPosition(len(search_text))
+
+    def display_search_results(self, results: List[FileObject], query: str = ""):
+        """Affiche les résultats de recherche"""
         self.results_list.clear()
+        
         for obj in results:
             item = QListWidgetItem(f"{obj.name} ({obj.file_type})")
             item.setData(Qt.UserRole, obj.id)
             self.results_list.addItem(item)
         
-        # Afficher le nombre de résultats
+        # Afficher le nombre de résultats et la requête
         if results:
-            count_item = QListWidgetItem(f"--- {len(results)} résultat(s) trouvé(s) ---")
-            count_item.setFlags(Qt.NoItemFlags)  # Rendre l'item non sélectionnable
+            count_text = f"--- {len(results)} résultat(s)"
+            if query:
+                count_text += f" pour: {query}"
+            count_text += " ---"
+            
+            count_item = QListWidgetItem(count_text)
+            count_item.setFlags(Qt.NoItemFlags)
+            count_item.setForeground(Qt.darkGray)
             self.results_list.addItem(count_item)
         
         # Effacer la prévisualisation si aucun résultat
@@ -1551,6 +1773,12 @@ class MainWindow(QMainWindow):
             self.preview_widget.clear_preview()
             self.open_location_button.setEnabled(False)
             self.edit_button.setEnabled(False)
+            
+            if query:
+                QMessageBox.information(self, "Recherche", 
+                                      f"Aucun résultat trouvé pour: {query}")
+
+    
 
     def show_search_history(self):
         """Affiche la boîte de dialogue d'historique des recherches"""
@@ -1915,12 +2143,83 @@ class MainWindow(QMainWindow):
                          f"- Externes: URLs web (http://, https://)\n\n"
                          f"Nouveau: Prévisualisation des images et modification des éléments!")
 
-# Point d'entrée de l'application
+def test_boolean_search():
+    """Tests pour la recherche booléenne"""
+    # Créer une base de test
+    import tempfile
+    import shutil
+    
+    temp_dir = tempfile.mkdtemp()
+    db = TagDatabase(temp_dir)
+    
+    try:
+        # Créer des objets de test
+        obj1 = FileObject("chat.jpg", "Photo de chat", "image", "/tmp/chat.jpg")
+        obj2 = FileObject("chien.jpg", "Photo de chien", "image", "/tmp/chien.jpg")
+        obj3 = FileObject("chat et chien.jpg", "Photo groupe", "image", "/tmp/chat_chien.jpg")
+        
+        db.add_object(obj1)
+        db.add_object(obj2)
+        db.add_object(obj3)
+        
+        # Ajouter des tags
+        db.add_tag(obj1.id, "animal")
+        db.add_tag(obj2.id, "animal")
+        db.add_tag(obj3.id, "groupe")
+        db.add_tag(obj3.id, "animal")
+        
+        print("Testing boolean search...")
+        
+        # Tests de recherche
+        result = db.advanced_search("chat")
+        print(f"chat: {len(result)} résultats")
+        assert len(result) == 2, f"Expected 2, got {len(result)}"
+        
+        result = db.advanced_search("chien")
+        print(f"chien: {len(result)} résultats")
+        assert len(result) == 2, f"Expected 2, got {len(result)}"
+        
+        result = db.advanced_search("chat AND chien")
+        print(f"chat AND chien: {len(result)} résultats")
+        assert len(result) == 1, f"Expected 1, got {len(result)}"
+        
+        result = db.advanced_search("chat OR chien")
+        print(f"chat OR chien: {len(result)} résultats")
+        assert len(result) == 3, f"Expected 3, got {len(result)}"
+        
+        # Test NOT avec espaces
+        result = db.advanced_search("chat NOT chien")
+        print(f"chat NOT chien: {len(result)} résultats")
+        assert len(result) == 1, f"Expected 1, got {len(result)}"
+        
+        # Test avec tags
+        result = db.advanced_search("#animal")
+        print(f"#animal: {len(result)} résultats")
+        assert len(result) == 3, f"Expected 3, got {len(result)}"
+        
+        result = db.advanced_search("#animal AND #groupe")
+        print(f"#animal AND #groupe: {len(result)} résultats")
+        assert len(result) == 1, f"Expected 1, got {len(result)}"
+        
+        result = db.advanced_search("(chat OR chien) AND #groupe")
+        print(f"(chat OR chien) AND #groupe: {len(result)} résultats")
+        assert len(result) == 1, f"Expected 1, got {len(result)}"
+        
+        print("✓ Tous les tests de recherche booléenne ont réussi")
+        
+    except Exception as e:
+        print(f"✗ Erreur dans les tests: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        shutil.rmtree(temp_dir)
+
 if __name__ == "__main__":
+    # Lancer les tests au démarrage
+    test_boolean_search()
+    
     import sys
     app = QApplication(sys.argv)
-    
     window = MainWindow()
     window.show()
-    
     sys.exit(app.exec_())
