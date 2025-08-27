@@ -190,23 +190,31 @@ class TagDatabase:
                 except Exception as e:
                     print(f"Erreur lors du chargement du tag {filename}: {e}")
     
-    def add_object(self, obj: FileObject) -> None:
-        """Ajoute un objet à la base de données"""
+    def add_object(self, obj: FileObject) -> Optional[str]:
+        """Ajoute un objet à la base de données si l'emplacement n'existe pas déjà"""
+        if self.location_exists(obj.location):
+            return None  # Retourne None si doublon
+        
         self.objects[obj.id] = obj
         self.save_object(obj)
         return obj.id
     
     def update_object(self, obj_id: str, name: str, description: str, file_type: str, location: str) -> bool:
-        """Met à jour un objet existant"""
+        """Met à jour un objet existant en vérifiant les doublons"""
         if obj_id not in self.objects:
             return False
-        
+
+        # Vérifier si le nouvel emplacement existe déjà pour un autre objet
+        if location != self.objects[obj_id].location:  # Seulement si l'emplacement change
+            if self.location_exists(location):
+                return False
+
         # Mettre à jour les propriétés de l'objet
         self.objects[obj_id].name = name
         self.objects[obj_id].description = description
         self.objects[obj_id].file_type = file_type
         self.objects[obj_id].location = location
-        
+
         # Sauvegarder les modifications
         self.save_object(self.objects[obj_id])
         return True
@@ -333,6 +341,19 @@ class TagDatabase:
         
         return list(set(results))  # Éliminer les doublons
 
+    def location_exists(self, location: str) -> bool:
+        """Vérifie si un emplacement existe déjà dans la base de données"""
+        for obj in self.objects.values():
+            if obj.location == location:
+                return True
+        return False
+
+    def get_object_by_location(self, location: str) -> Optional[FileObject]:
+        """Retourne l'objet correspondant à un emplacement"""
+        for obj in self.objects.values():
+            if obj.location == location:
+                return obj
+        return None
 class FirstRunDialog(QDialog):
     """Boîte de dialogue pour le premier démarrage"""
     def __init__(self, parent=None):
@@ -627,7 +648,7 @@ class MainWindow(QMainWindow):
         self.search_input.setCompleter(completer)
 
     def import_folder(self):
-        """Importe tous les fichiers d'un dossier"""
+        """Importe tous les fichiers d'un dossier en évitant les doublons"""
         if not self.db:
             QMessageBox.warning(self, "Erreur", "Aucune base de données n'est ouverte.")
             return
@@ -650,70 +671,75 @@ class MainWindow(QMainWindow):
             return
         
         # Compter les fichiers
-        supported_extensions = {
-            'image': ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'],
-            'video': ['.mp4', '.avi', '.mov', '.wmv', '.mkv', '.flv'],
-            'audio': ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a'],
-            'document': ['.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt', '.xls', '.xlsx']
-        }
-        
-        # Récupérer tous les fichiers du dossier
         import_count = 0
+        duplicate_count = 0
         error_count = 0
         
         progress_dialog = QProgressDialog("Importation des fichiers...", "Annuler", 0, 100, self)
         progress_dialog.setWindowTitle("Importation en cours")
         progress_dialog.setWindowModality(Qt.WindowModal)
         
+        # Récupérer la liste de tous les fichiers d'abord pour connaître le total
+        all_files = []
         for root_dir, dirs, files in os.walk(folder):
             for file in files:
                 file_path = os.path.join(root_dir, file)
+                all_files.append(file_path)
+        
+        total_files = len(all_files)
+        progress_dialog.setMaximum(total_files)
+        
+        for i, file_path in enumerate(all_files):
+            if progress_dialog.wasCanceled():
+                break
+            
+            # Vérifier si le fichier existe déjà dans la base
+            if self.db.location_exists(file_path):
+                duplicate_count += 1
+                progress_dialog.setValue(i + 1)
+                continue
+            
+            # Déterminer le type de fichier
+            actual_type = self.get_file_type_from_extension(file_path)
+            if actual_type == "autre":
+                actual_type = file_type  # Utiliser le type par défaut si non reconnu
+            
+            # Créer l'objet
+            try:
+                obj = FileObject(
+                    name=os.path.basename(file_path),  # Nom du fichier comme nom par défaut
+                    description=f"Fichier importé automatiquement depuis: {file_path}",
+                    file_type=actual_type,
+                    location=file_path
+                )
                 
-                # Vérifier l'extension pour déterminer le type
-                file_ext = os.path.splitext(file)[1].lower()
-                actual_type = file_type
-                
-                # Déterminer automatiquement le type si possible
-                for type_name, extensions in supported_extensions.items():
-                    if file_ext in extensions:
-                        actual_type = type_name
-                        break
-                
-                # Créer l'objet
-                try:
-                    obj = FileObject(
-                        name=file,  # Nom du fichier comme nom par défaut
-                        description=f"Fichier importé automatiquement depuis: {file_path}",
-                        file_type=actual_type,
-                        location=file_path
-                    )
-                    
-                    # Ajouter à la base de données
-                    self.db.add_object(obj)
+                # Ajouter à la base de données
+                obj_id = self.db.add_object(obj)
+                if obj_id is not None:
                     import_count += 1
+                else:
+                    duplicate_count += 1
                     
-                    # Mettre à jour la barre de progression
-                    progress_dialog.setValue((import_count + error_count) % 100)
-                    if progress_dialog.wasCanceled():
-                        break
-                        
-                except Exception as e:
-                    error_count += 1
-                    print(f"Erreur lors de l'import de {file_path}: {e}")
+            except Exception as e:
+                error_count += 1
+                print(f"Erreur lors de l'import de {file_path}: {e}")
+            
+            progress_dialog.setValue(i + 1)
         
         progress_dialog.close()
         
         # Afficher les résultats
         self.load_all_objects()
         
-        QMessageBox.information(
-            self,
-            "Importation terminée",
-            f"Importation terminée !\n\n"
-            f"Fichiers importés: {import_count}\n"
-            f"Erreurs: {error_count}\n\n"
-            f"Les fichiers ont été ajoutés avec leur nom comme intitulé par défaut."
-        )
+        message = f"Importation terminée !\n\n" \
+                f"Fichiers importés: {import_count}\n" \
+                f"Fichiers en double ignorés: {duplicate_count}\n" \
+                f"Erreurs: {error_count}"
+        
+        if duplicate_count > 0:
+            message += "\n\nLes fichiers en double ont été automatiquement ignorés."
+        
+        QMessageBox.information(self, "Importation terminée", message)
 
     def get_file_type_from_extension(self, file_path):
         """Détermine le type de fichier basé sur l'extension"""
@@ -1594,6 +1620,19 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Erreur", "L'URL doit commencer par http:// ou https://")
                 return
             
+            # Vérifier si l'emplacement existe déjà
+            if self.db.location_exists(location):
+                existing_obj = self.db.get_object_by_location(location)
+                QMessageBox.warning(
+                    self, 
+                    "Fichier déjà existant", 
+                    f"Cet emplacement existe déjà dans la base de données:\n\n"
+                    f"Nom: {existing_obj.name}\n"
+                    f"Type: {existing_obj.file_type}\n\n"
+                    f"Vous ne pouvez pas ajouter le même fichier deux fois."
+                )
+                return
+            
             # Créer le nouvel objet
             new_obj = FileObject(
                 data["name"],
@@ -1603,7 +1642,11 @@ class MainWindow(QMainWindow):
             )
             
             # Ajouter à la base de données
-            self.db.add_object(new_obj)
+            obj_id = self.db.add_object(new_obj)
+            
+            if obj_id is None:
+                QMessageBox.warning(self, "Erreur", "Impossible d'ajouter le fichier (doublon).")
+                return
             
             # Mettre à jour l'interface
             self.load_all_objects()
@@ -1627,7 +1670,7 @@ class MainWindow(QMainWindow):
         self.edit_object_by_id(obj_id)
     
     def edit_object_by_id(self, obj_id):
-        """Modifie un objet par son ID"""
+        """Modifie un objet par son ID en vérifiant les doublons"""
         if not self.db:
             QMessageBox.warning(self, "Erreur", "Aucune base de données n'est ouverte.")
             return
@@ -1654,6 +1697,20 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Erreur", "L'URL doit commencer par http:// ou https://")
                 return
             
+            # Vérifier si le nouvel emplacement existe déjà pour un autre objet
+            if location != obj.location:  # Seulement si l'emplacement change
+                if self.db.location_exists(location):
+                    existing_obj = self.db.get_object_by_location(location)
+                    QMessageBox.warning(
+                        self, 
+                        "Emplacement déjà existant", 
+                        f"Cet emplacement existe déjà pour un autre objet:\n\n"
+                        f"Nom: {existing_obj.name}\n"
+                        f"Type: {existing_obj.file_type}\n\n"
+                        f"Vous ne pouvez pas utiliser le même emplacement pour deux objets différents."
+                    )
+                    return
+            
             # Mettre à jour l'objet
             success = self.db.update_object(
                 obj_id,
@@ -1668,7 +1725,7 @@ class MainWindow(QMainWindow):
                 self.load_all_objects()
                 QMessageBox.information(self, "Succès", "Fichier modifié avec succès.")
             else:
-                QMessageBox.warning(self, "Erreur", "Impossible de modifier le fichier.")
+                QMessageBox.warning(self, "Erreur", "Impossible de modifier le fichier (doublon détecté).")
     
     def delete_current_object(self):
         """Supprime l'objet courant"""

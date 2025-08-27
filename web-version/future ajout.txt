@@ -7,6 +7,12 @@ Interface responsive avancée
 Mode sombre
 Suggestions de tags automatiques
 
+-----------------------EN COURS---------------------------
+Importation d'un dossier
+    pas 2 fois le meme fichier
+    tag appliquer a tout les éléments importers
+
+
 
 ------------------------Avencer----------------------------
 OCR intégré
