@@ -9,7 +9,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QLineEdit, QPushButton, QListWidget, QListWidgetItem, QLabel, 
                              QTextEdit, QComboBox, QFileDialog, QMessageBox, QSplitter,
                              QTreeWidget, QTreeWidgetItem, QTabWidget, QGroupBox, QDialog,
-                             QMenu, QAction, QCompleter, QInputDialog, QProgressDialog)
+                             QMenu, QAction, QCompleter, QInputDialog, QProgressDialog,
+                             QCheckBox)
 from PyQt5.QtCore import Qt, QUrl, QSettings
 from PyQt5.QtGui import QIcon, QFont, QDesktopServices, QPixmap, QPalette, QColor
 
@@ -354,6 +355,85 @@ class TagDatabase:
             if obj.location == location:
                 return obj
         return None
+    
+class ImportFolderDialog(QDialog):
+    """Boîte de dialogue pour l'import de dossier avec options"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Importer un dossier")
+        self.setModal(True)
+        self.setMinimumWidth(400)
+        self.init_ui()
+    
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Type de fichier par défaut
+        type_layout = QHBoxLayout()
+        type_layout.addWidget(QLabel("Type de fichier par défaut:"))
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["image", "video", "audio", "document", "autre"])
+        type_layout.addWidget(self.type_combo)
+        layout.addLayout(type_layout)
+        
+        # Tags
+        tags_layout = QVBoxLayout()
+        tags_layout.addWidget(QLabel("Tags à appliquer (optionnel):"))
+        self.tags_input = QLineEdit()
+        self.tags_input.setPlaceholderText("Exemple: vacances été 2024")
+        tags_layout.addWidget(self.tags_input)
+        tags_layout.addWidget(QLabel("Séparez les tags par des espaces, virgules ou points-virgules"))
+        layout.addLayout(tags_layout)
+        
+        # Options avancées
+        advanced_group = QGroupBox("Options avancées")
+        advanced_layout = QVBoxLayout()
+        
+        self.recursive_check = QCheckBox("Importer les sous-dossiers récursivement")
+        self.recursive_check.setChecked(True)
+        self.recursive_check.setToolTip("Recherche les fichiers dans tous les sous-dossiers")
+        advanced_layout.addWidget(self.recursive_check)
+        
+        advanced_group.setLayout(advanced_layout)
+        layout.addWidget(advanced_group)
+        
+        # Boutons
+        button_layout = QHBoxLayout()
+        self.cancel_button = QPushButton("Annuler")
+        self.cancel_button.clicked.connect(self.reject)
+        self.import_button = QPushButton("Importer")
+        self.import_button.clicked.connect(self.accept)
+        self.import_button.setDefault(True)
+        
+        button_layout.addWidget(self.cancel_button)
+        button_layout.addWidget(self.import_button)
+        layout.addLayout(button_layout)
+    
+    def get_data(self):
+        """Retourne les données saisies"""
+        tags = self.parse_tags(self.tags_input.text())
+        
+        return {
+            "file_type": self.type_combo.currentText(),
+            "tags": tags,
+            "recursive": self.recursive_check.isChecked()
+        }
+    
+    def parse_tags(self, tags_input: str) -> List[str]:
+        """Parse une chaîne de tags en liste de tags nettoyés"""
+        if not tags_input.strip():
+            return []
+        
+        # Séparer par espaces, virgules, points-virgules
+        raw_tags = re.split(r'[,\s;]+', tags_input.strip())
+        cleaned_tags = []
+        for tag in raw_tags:
+            cleaned_tag = tag.strip().lstrip('#')
+            if cleaned_tag:
+                cleaned_tags.append(cleaned_tag)
+        
+        return cleaned_tags
+
 class FirstRunDialog(QDialog):
     """Boîte de dialogue pour le premier démarrage"""
     def __init__(self, parent=None):
@@ -648,7 +728,7 @@ class MainWindow(QMainWindow):
         self.search_input.setCompleter(completer)
 
     def import_folder(self):
-        """Importe tous les fichiers d'un dossier en évitant les doublons"""
+        """Importe un dossier avec une boîte de dialogue améliorée"""
         if not self.db:
             QMessageBox.warning(self, "Erreur", "Aucune base de données n'est ouverte.")
             return
@@ -657,36 +737,45 @@ class MainWindow(QMainWindow):
         if not folder:
             return
         
-        # Demander le type de fichier par défaut
-        file_type, ok = QInputDialog.getItem(
-            self,
-            "Type de fichier",
-            "Sélectionnez le type de fichier par défaut:",
-            ["image", "video", "audio", "document", "autre"],
-            0,  # Index par défaut
-            False  # Non éditable
-        )
-        
-        if not ok:
+        dialog = ImportFolderDialog(self)
+        if dialog.exec() != QDialog.Accepted:
             return
+        
+        data = dialog.get_data()
+        file_type = data["file_type"]
+        tags_to_apply = data["tags"]
+        recursive = data["recursive"]
         
         # Compter les fichiers
         import_count = 0
         duplicate_count = 0
         error_count = 0
+        tagged_count = 0
         
         progress_dialog = QProgressDialog("Importation des fichiers...", "Annuler", 0, 100, self)
         progress_dialog.setWindowTitle("Importation en cours")
         progress_dialog.setWindowModality(Qt.WindowModal)
         
-        # Récupérer la liste de tous les fichiers d'abord pour connaître le total
+        # Récupérer la liste de tous les fichiers
         all_files = []
-        for root_dir, dirs, files in os.walk(folder):
-            for file in files:
-                file_path = os.path.join(root_dir, file)
-                all_files.append(file_path)
+        if recursive:
+            # Parcours récursif de tous les sous-dossiers
+            for root_dir, dirs, files in os.walk(folder):
+                for file in files:
+                    file_path = os.path.join(root_dir, file)
+                    all_files.append(file_path)
+        else:
+            # Seulement les fichiers du dossier racine
+            for file in os.listdir(folder):
+                file_path = os.path.join(folder, file)
+                if os.path.isfile(file_path):
+                    all_files.append(file_path)
         
         total_files = len(all_files)
+        if total_files == 0:
+            QMessageBox.information(self, "Information", "Aucun fichier trouvé dans le dossier sélectionné.")
+            return
+        
         progress_dialog.setMaximum(total_files)
         
         for i, file_path in enumerate(all_files):
@@ -706,9 +795,11 @@ class MainWindow(QMainWindow):
             
             # Créer l'objet
             try:
+                # Créer une description avec le chemin relatif
+                relative_path = os.path.relpath(file_path, folder)
                 obj = FileObject(
                     name=os.path.basename(file_path),  # Nom du fichier comme nom par défaut
-                    description=f"Fichier importé automatiquement depuis: {file_path}",
+                    description=f"Fichier importé depuis: {relative_path}\nDossier: {os.path.basename(folder)}",
                     file_type=actual_type,
                     location=file_path
                 )
@@ -717,6 +808,12 @@ class MainWindow(QMainWindow):
                 obj_id = self.db.add_object(obj)
                 if obj_id is not None:
                     import_count += 1
+                    
+                    # Appliquer les tags si spécifiés
+                    if tags_to_apply:
+                        for tag in tags_to_apply:
+                            self.db.add_tag(obj_id, tag)
+                        tagged_count += 1
                 else:
                     duplicate_count += 1
                     
@@ -725,6 +822,7 @@ class MainWindow(QMainWindow):
                 print(f"Erreur lors de l'import de {file_path}: {e}")
             
             progress_dialog.setValue(i + 1)
+            QApplication.processEvents()  # Permet à l'interface de rester responsive
         
         progress_dialog.close()
         
@@ -733,13 +831,35 @@ class MainWindow(QMainWindow):
         
         message = f"Importation terminée !\n\n" \
                 f"Fichiers importés: {import_count}\n" \
+                f"Fichiers tagués: {tagged_count}\n" \
                 f"Fichiers en double ignorés: {duplicate_count}\n" \
                 f"Erreurs: {error_count}"
+        
+        if tags_to_apply:
+            tags_str = ", ".join([f"#{tag}" for tag in tags_to_apply])
+            message += f"\n\nTags appliqués: {tags_str}"
         
         if duplicate_count > 0:
             message += "\n\nLes fichiers en double ont été automatiquement ignorés."
         
         QMessageBox.information(self, "Importation terminée", message)
+
+        def parse_tags(self, tags_input: str) -> List[str]:
+            """Parse une chaîne de tags en liste de tags nettoyés"""
+            if not tags_input.strip():
+                return []
+            
+            # Séparer par espaces, virgules, points-virgules, etc.
+            raw_tags = re.split(r'[,\s;]+', tags_input.strip())
+            
+            # Nettoyer et filtrer les tags vides
+            cleaned_tags = []
+            for tag in raw_tags:
+                cleaned_tag = tag.strip().lstrip('#')  # Enlever les # au début
+                if cleaned_tag:  # Ignorer les tags vides
+                    cleaned_tags.append(cleaned_tag)
+            
+            return cleaned_tags
 
     def get_file_type_from_extension(self, file_path):
         """Détermine le type de fichier basé sur l'extension"""
