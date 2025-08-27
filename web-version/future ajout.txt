@@ -1,3 +1,5 @@
+------------------------ FAIT ------------------------
+
 --Gestion-des-collections/albums-(HTML)--
 --Historique-de-recherche--
 --Mode-sombre--
@@ -5,6 +7,10 @@
     --pas-2-fois-le-meme-fichier--
     --tag-appliquer-a-tout-les-éléments-importer--
     }
+--Recherche booléenne complète - Essentiel pour l'utilité--
+
+------------------------ A FAIRE ------------------------
+
 Interface de glisser-déposer
 Suggestions de tags automatiques
 Recherche avancée avec interface visuelle
@@ -27,6 +33,7 @@ Outils d'Administration{
 }
 
 ------------------------Avencer----------------------------
+
 Interface multilingue
 Intelligence Artificielle et Automatisation{
     Tagging automatique par IA (reconnaissance d'images, NLP);
@@ -59,11 +66,10 @@ Sécurité et Vie Privée{
 
 -----------------------Priorités de Développement (Phase 1)-----------------------
 
-Recherche booléenne complète - Essentiel pour l'utilité
 Système de collections/albums - Organisation visuelle
 Prévisualisation avancée - Meilleure UX
 
------------------------EN COURS---------------------------
+----------------------- EN COURS ---------------------------
 
 
 
