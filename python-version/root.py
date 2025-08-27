@@ -2,12 +2,14 @@ import os
 import json
 import uuid
 import re
+import datetime
+from collections import deque
 from typing import List, Dict, Set, Optional
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLineEdit, QPushButton, QListWidget, QListWidgetItem, QLabel, 
                              QTextEdit, QComboBox, QFileDialog, QMessageBox, QSplitter,
                              QTreeWidget, QTreeWidgetItem, QTabWidget, QGroupBox, QDialog,
-                             QMenu, QAction)
+                             QMenu, QAction, QCompleter)
 from PyQt5.QtCore import Qt, QUrl, QSettings
 from PyQt5.QtGui import QIcon, QFont, QDesktopServices, QPixmap, QPalette, QColor
 
@@ -39,6 +41,50 @@ class Config:
     def set_dark_mode(self, enabled):
         """Définit l'état du mode sombre"""
         self.settings.setValue("dark_mode", enabled)
+    
+    def get_history_file(self):
+        """Retourne le chemin du fichier d'historique"""
+        data_dir = self.get_data_dir()
+        return os.path.join(data_dir, "search_history.json")
+
+
+class SearchHistory:
+    """Gère l'historique des recherches"""
+    def __init__(self, max_history=50):
+        self.max_history = max_history
+        self.history = deque(maxlen=max_history)
+    
+    def add_search(self, query):
+        """Ajoute une recherche à l'historique"""
+        if query and query.strip():
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.history.appendleft((timestamp, query.strip()))
+    
+    def get_recent_searches(self, limit=10):
+        """Retourne les recherches récentes"""
+        return list(self.history)[:limit]
+    
+    def clear_history(self):
+        """Efface tout l'historique"""
+        self.history.clear()
+    
+    def save_to_file(self, file_path):
+        """Sauvegarde l'historique dans un fichier"""
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(list(self.history), f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Erreur lors de la sauvegarde de l'historique: {e}")
+    
+    def load_from_file(self, file_path):
+        """Charge l'historique depuis un fichier"""
+        try:
+            if os.path.exists(file_path):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    history_data = json.load(f)
+                    self.history = deque(history_data, maxlen=self.max_history)
+        except Exception as e:
+            print(f"Erreur lors du chargement de l'historique: {e}")
 
 class FileObject:
     def __init__(self, name: str, description: str, file_type: str, location: str):
@@ -547,10 +593,40 @@ class MainWindow(QMainWindow):
         self.config = Config()
         self.db = None
         self.current_object = None
+        self.search_history = SearchHistory()
         self.init_ui()
         self.load_database()
-        self.apply_theme()  # Appliquer le thème au démarrage
+        self.apply_theme()
+        self.load_search_history()  # Charger l'historique au démarrage
     
+    def load_search_history(self):
+        """Charge l'historique des recherches"""
+        history_file = self.config.get_history_file()
+        self.search_history.load_from_file(history_file)
+        self.update_search_suggestions()
+    
+    def save_search_history(self):
+        """Sauvegarde l'historique des recherches"""
+        history_file = self.config.get_history_file()
+        self.search_history.save_to_file(history_file)
+
+    def closeEvent(self, event):
+        """Sauvegarde l'historique lors de la fermeture de l'application"""
+        self.save_search_history()
+        event.accept()
+
+    def update_search_suggestions(self):
+        """Met à jour les suggestions de recherche"""
+        recent_searches = self.search_history.get_recent_searches(10)
+        self.search_input.clear()
+        
+        # Créer un modèle de complétion
+        completer = QCompleter([search[1] for search in recent_searches], self)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchContains)
+        self.search_input.setCompleter(completer)
+
+
     def init_ui(self):
         self.setWindowTitle("Gestionnaire de Fichiers par Tags")
         self.setGeometry(100, 100, 1400, 800)  # Augmenté la largeur pour accommoder la prévisualisation
@@ -803,8 +879,6 @@ class MainWindow(QMainWindow):
             self.setStyleSheet("")
         
         app.setPalette(palette)
-    
-    # ... (le reste des méthodes reste inchangé) ...
 
     def init_ui(self):
         self.setWindowTitle("Gestionnaire de Fichiers par Tags")
@@ -959,6 +1033,15 @@ class MainWindow(QMainWindow):
         
         delete_action = edit_menu.addAction("Supprimer l'élément sélectionné")
         delete_action.triggered.connect(self.delete_current_object)
+        
+        # Menu Recherche
+        search_menu = menu_bar.addMenu("Recherche")
+        
+        history_action = search_menu.addAction("Historique des recherches")
+        history_action.triggered.connect(self.show_search_history)
+        
+        clear_history_action = search_menu.addAction("Effacer l'historique")
+        clear_history_action.triggered.connect(self.clear_search_history)
         
         # Menu Tags
         tags_menu = menu_bar.addMenu("Tags")
@@ -1128,6 +1211,12 @@ class MainWindow(QMainWindow):
             self.load_all_objects()
             return
         
+         
+        # Ajouter à l'historique
+        self.search_history.add_search(query)
+        self.update_search_suggestions()
+        self.save_search_history()  # Sauvegarder après chaque recherche
+
         results = []
         
         # Vérifier si la requête contient des tags (#)
@@ -1199,7 +1288,82 @@ class MainWindow(QMainWindow):
             self.preview_widget.clear_preview()
             self.open_location_button.setEnabled(False)
             self.edit_button.setEnabled(False)
+
+    def show_search_history(self):
+        """Affiche la boîte de dialogue d'historique des recherches"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Historique des recherches")
+        dialog.setModal(True)
+        dialog.setMinimumSize(500, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Liste de l'historique
+        history_list = QListWidget()
+        
+        for timestamp, query in self.search_history.history:
+            item = QListWidgetItem(f"{timestamp} - {query}")
+            item.setData(Qt.UserRole, query)
+            history_list.addItem(item)
+        
+        layout.addWidget(QLabel("Historique des recherches récentes:"))
+        layout.addWidget(history_list)
+        
+        # Boutons
+        button_layout = QHBoxLayout()
+        
+        search_button = QPushButton("Rechercher à nouveau")
+        search_button.clicked.connect(lambda: self.reuse_search_query(history_list.currentItem(), dialog))
+        
+        clear_button = QPushButton("Effacer l'historique")
+        clear_button.clicked.connect(lambda: self.clear_search_history(dialog))
+        
+        close_button = QPushButton("Fermer")
+        close_button.clicked.connect(dialog.accept)
+        
+        button_layout.addWidget(search_button)
+        button_layout.addWidget(clear_button)
+        button_layout.addWidget(close_button)
+        
+        layout.addLayout(button_layout)
+        
+        # Connecter le double-clic pour réutiliser la recherche
+        history_list.itemDoubleClicked.connect(lambda item: self.reuse_search_query(item, dialog))
+        
+        dialog.exec_()
+
+    def reuse_search_query(self, item, dialog=None):
+        """Réutilise une recherche de l'historique"""
+        if not item:
+            return
+        
+        query = item.data(Qt.UserRole)
+        if query:
+            self.search_input.setText(query)
+            self.perform_search()
+            if dialog:
+                dialog.accept()
     
+    def clear_search_history(self, dialog=None):
+        """Efface tout l'historique des recherches"""
+        reply = QMessageBox.question(
+            self,
+            "Confirmation",
+            "Êtes-vous sûr de vouloir effacer tout l'historique des recherches ?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.search_history.clear_history()
+            self.update_search_suggestions()
+            self.save_search_history()
+            
+            if dialog:
+                dialog.accept()
+            
+            QMessageBox.information(self, "Succès", "Historique des recherches effacé.")
+
     def display_object_details(self, item):
         """Affiche les détails de l'objet sélectionné"""
         if not self.db:
