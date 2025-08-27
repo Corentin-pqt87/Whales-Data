@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QLineEdit, QPushButton, QListWidget, QListWidgetItem, QLabel, 
                              QTextEdit, QComboBox, QFileDialog, QMessageBox, QSplitter,
                              QTreeWidget, QTreeWidgetItem, QTabWidget, QGroupBox, QDialog,
-                             QMenu, QAction, QCompleter)
+                             QMenu, QAction, QCompleter, QInputDialog, QProgressDialog)
 from PyQt5.QtCore import Qt, QUrl, QSettings
 from PyQt5.QtGui import QIcon, QFont, QDesktopServices, QPixmap, QPalette, QColor
 
@@ -626,6 +626,114 @@ class MainWindow(QMainWindow):
         completer.setFilterMode(Qt.MatchContains)
         self.search_input.setCompleter(completer)
 
+    def import_folder(self):
+        """Importe tous les fichiers d'un dossier"""
+        if not self.db:
+            QMessageBox.warning(self, "Erreur", "Aucune base de données n'est ouverte.")
+            return
+            
+        folder = QFileDialog.getExistingDirectory(self, "Sélectionner le dossier à importer")
+        if not folder:
+            return
+        
+        # Demander le type de fichier par défaut
+        file_type, ok = QInputDialog.getItem(
+            self,
+            "Type de fichier",
+            "Sélectionnez le type de fichier par défaut:",
+            ["image", "video", "audio", "document", "autre"],
+            0,  # Index par défaut
+            False  # Non éditable
+        )
+        
+        if not ok:
+            return
+        
+        # Compter les fichiers
+        supported_extensions = {
+            'image': ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'],
+            'video': ['.mp4', '.avi', '.mov', '.wmv', '.mkv', '.flv'],
+            'audio': ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a'],
+            'document': ['.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt', '.xls', '.xlsx']
+        }
+        
+        # Récupérer tous les fichiers du dossier
+        import_count = 0
+        error_count = 0
+        
+        progress_dialog = QProgressDialog("Importation des fichiers...", "Annuler", 0, 100, self)
+        progress_dialog.setWindowTitle("Importation en cours")
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        
+        for root_dir, dirs, files in os.walk(folder):
+            for file in files:
+                file_path = os.path.join(root_dir, file)
+                
+                # Vérifier l'extension pour déterminer le type
+                file_ext = os.path.splitext(file)[1].lower()
+                actual_type = file_type
+                
+                # Déterminer automatiquement le type si possible
+                for type_name, extensions in supported_extensions.items():
+                    if file_ext in extensions:
+                        actual_type = type_name
+                        break
+                
+                # Créer l'objet
+                try:
+                    obj = FileObject(
+                        name=file,  # Nom du fichier comme nom par défaut
+                        description=f"Fichier importé automatiquement depuis: {file_path}",
+                        file_type=actual_type,
+                        location=file_path
+                    )
+                    
+                    # Ajouter à la base de données
+                    self.db.add_object(obj)
+                    import_count += 1
+                    
+                    # Mettre à jour la barre de progression
+                    progress_dialog.setValue((import_count + error_count) % 100)
+                    if progress_dialog.wasCanceled():
+                        break
+                        
+                except Exception as e:
+                    error_count += 1
+                    print(f"Erreur lors de l'import de {file_path}: {e}")
+        
+        progress_dialog.close()
+        
+        # Afficher les résultats
+        self.load_all_objects()
+        
+        QMessageBox.information(
+            self,
+            "Importation terminée",
+            f"Importation terminée !\n\n"
+            f"Fichiers importés: {import_count}\n"
+            f"Erreurs: {error_count}\n\n"
+            f"Les fichiers ont été ajoutés avec leur nom comme intitulé par défaut."
+        )
+
+    def get_file_type_from_extension(self, file_path):
+        """Détermine le type de fichier basé sur l'extension"""
+        extension = os.path.splitext(file_path)[1].lower()
+        
+        image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']
+        video_extensions = ['.mp4', '.avi', '.mov', '.wmv', '.mkv', '.flv']
+        audio_extensions = ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a']
+        document_extensions = ['.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt', '.xls', '.xlsx']
+        
+        if extension in image_extensions:
+            return "image"
+        elif extension in video_extensions:
+            return "video"
+        elif extension in audio_extensions:
+            return "audio"
+        elif extension in document_extensions:
+            return "document"
+        else:
+            return "autre"
 
     def init_ui(self):
         self.setWindowTitle("Gestionnaire de Fichiers par Tags")
@@ -1016,6 +1124,10 @@ class MainWindow(QMainWindow):
         
         add_file_action = file_menu.addAction("Ajouter un fichier")
         add_file_action.triggered.connect(self.add_new_file)
+
+        # Ajouter l'action d'import de dossier
+        import_folder_action = file_menu.addAction("Importer un dossier...")
+        import_folder_action.triggered.connect(self.import_folder)
         
         open_db_action = file_menu.addAction("Ouvrir un autre dossier...")
         open_db_action.triggered.connect(self.open_database)
