@@ -1,21 +1,69 @@
+--Gestion-des-collections/albums-(HTML)--
+--Historique-de-recherche--
+--Mode-sombre--
+--Importation-d'un-dossier--{
+    --pas-2-fois-le-meme-fichier--
+    --tag-appliquer-a-tout-les-éléments-importer--
+    }
 Interface de glisser-déposer
---Gestion-des-collections/albums--
+Suggestions de tags automatiques
 Recherche avancée avec interface visuelle
 Métadonnées EXIF pour les images
-Interface responsive avancée
---Historique-de-recherche--
-Mode sombre
-Suggestions de tags automatiques
-
------------------------EN COURS---------------------------
-Importation d'un dossier
-    pas 2 fois le meme fichier
-    tag appliquer a tout les éléments importers
-
-
+Historique des modifications
+Permissions granulaires
+Gestion des collections/albums
+Raccourcis clavier complets
+Améliorations de Prévisualisation {
+    Visionneuse intégrée pour images, PDF, vidéos, audio;
+    Édition basique (rotation, recadrage pour images);
+    Extraction de métadonnées automatique (EXIF, ID3, etc.);
+    OCR intégré pour texte dans les images
+}
+Outils d'Administration{
+    Nettoyage de base (fichiers manquants, doublons);
+    Statistiques d'usage et analytics;
+    Gestion des sauvegardes automatiques;
+    Journal d'audit des actions utilisateurs
+}
 
 ------------------------Avencer----------------------------
-OCR intégré
-Édition basique d'images
 Interface multilingue
-Intelligence artificielle intégrée
+Intelligence Artificielle et Automatisation{
+    Tagging automatique par IA (reconnaissance d'images, NLP);
+    Suggestions de tags intelligentes;
+    Détection de doublons avancée;
+    Corrections automatiques de métadonnées
+}
+Accessibilité et Multiplateforme{
+    Interface responsive pour mobile/tablette;
+    Application desktop (Electron) + web + mobile apps
+}
+Personnalisation{
+    Thèmes personnalisables (couleurs, polices);
+    Disposition modifiable de l'interface;
+    Workflows personnalisables;
+    Scripts personnalisés (Python/JS)
+}
+Performances{
+    Indexation full-text pour recherche rapide;
+    Cache intelligent des prévisualisations;
+    Chargement paresseux (lazy loading) pour grandes collections;
+    Multi-threading pour opérations longues
+}
+Sécurité et Vie Privée{
+    Chiffrement des données sensibles;
+    Authentification à 2 facteurs;
+    Conformité RGPD et autres régulations;
+    Suppression sécurisée des fichiers
+}
+
+-----------------------Priorités de Développement (Phase 1)-----------------------
+
+Recherche booléenne complète - Essentiel pour l'utilité
+Système de collections/albums - Organisation visuelle
+Prévisualisation avancée - Meilleure UX
+
+-----------------------EN COURS---------------------------
+
+
+
