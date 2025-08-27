@@ -152,44 +152,49 @@ class FileObject:
 class TagDatabase:
     def __init__(self, data_dir: str):
         self.data_dir = data_dir
+        self.objects_dir = os.path.join(data_dir, "Objects")
+        self.tags_dir = os.path.join(data_dir, "Tags")
         self.objects: Dict[str, FileObject] = {}  # ID -> FileObject
         self.tags: Dict[str, Set[str]] = {}       # Tag -> Set d'IDs
         self.tag_files: Dict[str, str] = {}       # Tag -> Chemin du fichier
         
-        # Créer le répertoire de données s'il n'existe pas
-        os.makedirs(data_dir, exist_ok=True)
+        # Créer les répertoires de données s'ils n'existent pas
+        os.makedirs(self.objects_dir, exist_ok=True)
+        os.makedirs(self.tags_dir, exist_ok=True)
         self.load_data()
     
     def load_data(self):
         """Charge les données depuis les fichiers JSON"""
         # Charger les objets
-        for filename in os.listdir(self.data_dir):
-            if filename.endswith(".json") and not filename.startswith("tag_"):
-                try:
-                    with open(os.path.join(self.data_dir, filename), 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        obj = FileObject(
-                            data["name"], 
-                            data["description"], 
-                            data["type"], 
-                            data["location"]
-                        )
-                        obj.id = data["id"]
-                        self.objects[obj.id] = obj
-                except Exception as e:
-                    print(f"Erreur lors du chargement de {filename}: {e}")
+        if os.path.exists(self.objects_dir):
+            for filename in os.listdir(self.objects_dir):
+                if filename.endswith(".json"):
+                    try:
+                        with open(os.path.join(self.objects_dir, filename), 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            obj = FileObject(
+                                data["name"], 
+                                data["description"], 
+                                data["type"], 
+                                data["location"]
+                            )
+                            obj.id = data["id"]
+                            self.objects[obj.id] = obj
+                    except Exception as e:
+                        print(f"Erreur lors du chargement de {filename}: {e}")
         
         # Charger les tags
-        for filename in os.listdir(self.data_dir):
-            if filename.startswith("tag_") and filename.endswith(".json"):
-                try:
-                    tag_name = filename[4:-5]  # Enlever "tag_" et ".json"
-                    with open(os.path.join(self.data_dir, filename), 'r', encoding='utf-8') as f:
-                        obj_ids = json.load(f)
-                        self.tags[tag_name] = set(obj_ids)
-                        self.tag_files[tag_name] = os.path.join(self.data_dir, filename)
-                except Exception as e:
-                    print(f"Erreur lors du chargement du tag {filename}: {e}")
+        if os.path.exists(self.tags_dir):
+            for filename in os.listdir(self.tags_dir):
+                if filename.endswith(".json"):
+                    try:
+                        tag_name = filename[:-5]  # Enlever ".json"
+                        with open(os.path.join(self.tags_dir, filename), 'r', encoding='utf-8') as f:
+                            obj_ids = json.load(f)
+                            self.tags[tag_name] = set(obj_ids)
+                            self.tag_files[tag_name] = os.path.join(self.tags_dir, filename)
+                    except Exception as e:
+                        print(f"Erreur lors du chargement du tag {filename}: {e}")
     
     def add_object(self, obj: FileObject) -> Optional[str]:
         """Ajoute un objet à la base de données si l'emplacement n'existe pas déjà"""
@@ -230,7 +235,7 @@ class TagDatabase:
             self.remove_tag(obj_id, tag)
         
         # Supprimer le fichier de l'objet
-        obj_file = os.path.join(self.data_dir, f"{obj_id}.json")
+        obj_file = os.path.join(self.objects_dir, f"{obj_id}.json")
         if os.path.exists(obj_file):
             try:
                 os.remove(obj_file)
@@ -243,7 +248,7 @@ class TagDatabase:
     
     def save_object(self, obj: FileObject) -> None:
         """Sauvegarde un objet dans un fichier JSON"""
-        obj_path = os.path.join(self.data_dir, f"{obj.id}.json")
+        obj_path = os.path.join(self.objects_dir, f"{obj.id}.json")
         with open(obj_path, 'w', encoding='utf-8') as f:
             json.dump(obj.to_dict(), f, ensure_ascii=False, indent=4)
     
@@ -258,7 +263,7 @@ class TagDatabase:
         # Créer le fichier de tag s'il n'existe pas
         if clean_tag not in self.tags:
             self.tags[clean_tag] = set()
-            tag_file_path = os.path.join(self.data_dir, f"tag_{clean_tag}.json")
+            tag_file_path = os.path.join(self.tags_dir, f"{clean_tag}.json")
             self.tag_files[clean_tag] = tag_file_path
         
         # Ajouter l'ID à l'ensemble des IDs pour ce tag
@@ -295,7 +300,7 @@ class TagDatabase:
         return results
     
     def search_by_tag(self, tag: str) -> List[FileObject]:
-        """Recherche des objets par tag"""
+        """Recherche des objets por tag"""
         clean_tag = tag.lstrip('#').strip().replace(' ', '_')
         if clean_tag not in self.tags:
             return []
