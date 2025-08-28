@@ -15,7 +15,7 @@ from PyQt5.QtCore import Qt, QUrl, QSettings, QStringListModel
 from PyQt5.QtGui import QIcon, QFont, QDesktopServices, QPixmap, QPalette, QColor
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), 'Function'))
-from Function.tirage import DuplicateFinder, get_partial_hash, get_full_hash
+from tirage import DuplicateFinder, get_partial_hash, get_full_hash
 
 class Config:
     """Classe de configuration pour gérer les préférences"""
