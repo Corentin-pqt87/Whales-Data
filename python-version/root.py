@@ -1218,6 +1218,17 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
         
+        # Menu Données (NOUVEAU)
+        data_menu = menu_bar.addMenu("Données")
+        
+        tags_action = QAction("Tags", self)
+        tags_action.triggered.connect(self.manage_tags)
+        data_menu.addAction(tags_action)
+        
+        collections_action = QAction("Collections", self)
+        collections_action.triggered.connect(self.manage_collections)
+        data_menu.addAction(collections_action)
+        
         # Menu Affichage
         view_menu = menu_bar.addMenu("Affichage")
         
@@ -1233,6 +1244,22 @@ class MainWindow(QMainWindow):
         about_action = QAction("À propos", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+
+    def manage_tags(self):
+        """Ouvre la boîte de dialogue de gestion des tags"""
+        dialog = TagsDialog(self, self.db)
+        dialog.exec_()
+        # Rafraîchir l'affichage après la gestion des tags
+        self.show_object_details()
+        self.update_completion(self.search_input.text())
+    
+    def manage_classes(self):
+        """Ouvre la boîte de dialogue de gestion des classes"""
+        dialog = ClassesDialog(self, self.db)
+        dialog.exec_()
+        # Rafraîchir l'affichage après la gestion des classes
+        self.show_object_details()
+        self.update_completion(self.search_input.text())
 
     def setup_autocompletion(self):
         """Configure l'auto-complétion pour la recherche"""
@@ -1888,6 +1915,317 @@ class MainWindow(QMainWindow):
             "- Interface intuitive avec mode sombre\n"
             "- Support des fichiers locaux et URLs web"
         )
+
+class TagsDialog(QDialog):
+    """Boîte de dialogue pour afficher la liste des tags et leur utilisation"""
+    def __init__(self, parent=None, db=None):
+        super().__init__(parent)
+        self.db = db
+        self.setWindowTitle("Gestion des Tags")
+        self.setModal(True)
+        self.setMinimumSize(500, 400)
+        self.init_ui()
+        self.load_tags()
+    
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Barre de recherche
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("Rechercher:"))
+        self.search_input = QLineEdit()
+        self.search_input.textChanged.connect(self.filter_tags)
+        search_layout.addWidget(self.search_input)
+        layout.addLayout(search_layout)
+        
+        # Liste des tags
+        self.tags_list = QListWidget()
+        self.tags_list.itemDoubleClicked.connect(self.search_tag)
+        layout.addWidget(QLabel("Tags:"))
+        layout.addWidget(self.tags_list)
+        
+        # Informations sur le tag sélectionné
+        self.info_label = QLabel()
+        self.info_label.setWordWrap(True)
+        layout.addWidget(self.info_label)
+        
+        # Boutons
+        button_layout = QHBoxLayout()
+        self.search_button = QPushButton("Rechercher ce tag")
+        self.search_button.clicked.connect(self.search_selected_tag)
+        self.delete_button = QPushButton("Supprimer le tag")
+        self.delete_button.clicked.connect(self.delete_selected_tag)
+        
+        button_layout.addWidget(self.search_button)
+        button_layout.addWidget(self.delete_button)
+        layout.addLayout(button_layout)
+        
+        # Bouton de fermeture
+        close_button = QPushButton("Fermer")
+        close_button.clicked.connect(self.accept)
+        layout.addWidget(close_button)
+        
+        self.update_buttons()
+    
+    def load_tags(self):
+        """Charge la liste des tags"""
+        self.all_tags = []
+        self.tags_list.clear()
+        
+        if not self.db:
+            return
+        
+        # Trier les tags par nombre d'objets (décroissant)
+        sorted_tags = sorted(self.db.tags.items(), key=lambda x: len(x[1]), reverse=True)
+        
+        for tag, obj_ids in sorted_tags:
+            count = len(obj_ids)
+            item = QListWidgetItem(f"{tag} ({count} objet{'s' if count > 1 else ''})")
+            item.setData(Qt.UserRole, tag)
+            self.tags_list.addItem(item)
+            self.all_tags.append((tag, count))
+    
+    def filter_tags(self, text):
+        """Filtre les tags selon le texte de recherche"""
+        self.tags_list.clear()
+        search_text = text.lower()
+        
+        for tag, count in self.all_tags:
+            if search_text in tag.lower():
+                item = QListWidgetItem(f"{tag} ({count} objet{'s' if count > 1 else ''})")
+                item.setData(Qt.UserRole, tag)
+                self.tags_list.addItem(item)
+    
+    def update_buttons(self):
+        """Met à jour l'état des boutons selon la sélection"""
+        has_selection = self.tags_list.currentItem() is not None
+        self.search_button.setEnabled(has_selection)
+        self.delete_button.setEnabled(has_selection)
+        
+        # Afficher les informations du tag sélectionné
+        if has_selection:
+            tag = self.tags_list.currentItem().data(Qt.UserRole)
+            count = len(self.db.tags.get(tag, []))
+            self.info_label.setText(f"Tag: #{tag}\nUtilisé par {count} objet{'s' if count > 1 else ''}")
+        else:
+            self.info_label.clear()
+    
+    def search_selected_tag(self):
+        """Lance une recherche avec le tag sélectionné"""
+        item = self.tags_list.currentItem()
+        if item:
+            self.search_tag(item)
+    
+    def search_tag(self, item):
+        """Recherche les objets avec le tag sélectionné"""
+        tag = item.data(Qt.UserRole)
+        self.parent().search_input.setText(f"#{tag}")
+        self.parent().perform_search()
+        self.accept()
+    
+    def delete_selected_tag(self):
+        """Supprime le tag sélectionné de tous les objets"""
+        item = self.tags_list.currentItem()
+        if not item:
+            return
+        
+        tag = item.data(Qt.UserRole)
+        count = len(self.db.tags.get(tag, []))
+        
+        reply = QMessageBox.question(
+            self,
+            "Confirmation",
+            f"Êtes-vous sûr de vouloir supprimer le tag '{tag}' ?\n"
+            f"Il sera retiré de {count} objet{'s' if count > 1 else ''}.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Retirer le tag de tous les objets
+            for obj_id in list(self.db.tags.get(tag, [])):
+                self.db.remove_tag(obj_id, tag)
+            
+            # Supprimer le fichier de tag
+            tag_file = self.db.tag_files.get(tag)
+            if tag_file and os.path.exists(tag_file):
+                try:
+                    os.remove(tag_file)
+                except Exception as e:
+                    print(f"Erreur lors de la suppression du fichier {tag_file}: {e}")
+            
+            # Mettre à jour les structures de données
+            if tag in self.db.tags:
+                del self.db.tags[tag]
+            if tag in self.db.tag_files:
+                del self.db.tag_files[tag]
+            
+            QMessageBox.information(self, "Succès", f"Tag '{tag}' supprimé avec succès.")
+            self.load_tags()
+
+class ClassesDialog(QDialog):
+    """Boîte de dialogue pour afficher la liste des classes et leur utilisation"""
+    def __init__(self, parent=None, db=None):
+        super().__init__(parent)
+        self.db = db
+        self.setWindowTitle("Gestion des Classes")
+        self.setModal(True)
+        self.setMinimumSize(500, 400)
+        self.init_ui()
+        self.load_classes()
+    
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Information
+        info_label = QLabel("Les classes fonctionnent comme des tags mais sont utilisées pour une classification hiérarchique.")
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("background-color: #f0f0f0; padding: 5px; border-radius: 3px;")
+        layout.addWidget(info_label)
+        
+        # Barre de recherche
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("Rechercher:"))
+        self.search_input = QLineEdit()
+        self.search_input.textChanged.connect(self.filter_classes)
+        search_layout.addWidget(self.search_input)
+        layout.addLayout(search_layout)
+        
+        # Liste des classes
+        self.classes_list = QListWidget()
+        self.classes_list.itemDoubleClicked.connect(self.search_class)
+        layout.addWidget(QLabel("Collection:"))
+        layout.addWidget(self.classes_list)
+        
+        # Informations sur la classe sélectionnée
+        self.info_label = QLabel()
+        self.info_label.setWordWrap(True)
+        layout.addWidget(self.info_label)
+        
+        # Boutons
+        button_layout = QHBoxLayout()
+        self.search_button = QPushButton("Rechercher cette classe")
+        self.search_button.clicked.connect(self.search_selected_class)
+        self.delete_button = QPushButton("Supprimer la classe")
+        self.delete_button.clicked.connect(self.delete_selected_class)
+        
+        button_layout.addWidget(self.search_button)
+        button_layout.addWidget(self.delete_button)
+        layout.addLayout(button_layout)
+        
+        # Bouton de fermeture
+        close_button = QPushButton("Fermer")
+        close_button.clicked.connect(self.accept)
+        layout.addWidget(close_button)
+        
+        self.update_buttons()
+    
+    def load_classes(self):
+        """Charge la liste des classes"""
+        self.all_classes = []
+        self.classes_list.clear()
+        
+        if not self.db:
+            return
+        
+        # Pour cet exemple, nous utilisons les tags qui commencent par "class:"
+        # comme système de classes
+        class_prefix = "class:"
+        class_tags = {}
+        
+        for tag, obj_ids in self.db.tags.items():
+            if tag.startswith(class_prefix):
+                class_name = tag[len(class_prefix):]
+                class_tags[class_name] = len(obj_ids)
+        
+        # Trier les classes par nombre d'objets (décroissant)
+        sorted_classes = sorted(class_tags.items(), key=lambda x: x[1], reverse=True)
+        
+        for class_name, count in sorted_classes:
+            item = QListWidgetItem(f"{class_name} ({count} objet{'s' if count > 1 else ''})")
+            item.setData(Qt.UserRole, class_name)
+            self.classes_list.addItem(item)
+            self.all_classes.append((class_name, count))
+    
+    def filter_classes(self, text):
+        """Filtre les classes selon le texte de recherche"""
+        self.classes_list.clear()
+        search_text = text.lower()
+        
+        for class_name, count in self.all_classes:
+            if search_text in class_name.lower():
+                item = QListWidgetItem(f"{class_name} ({count} objet{'s' if count > 1 else ''})")
+                item.setData(Qt.UserRole, class_name)
+                self.classes_list.addItem(item)
+    
+    def update_buttons(self):
+        """Met à jour l'état des boutons selon la sélection"""
+        has_selection = self.classes_list.currentItem() is not None
+        self.search_button.setEnabled(has_selection)
+        self.delete_button.setEnabled(has_selection)
+        
+        # Afficher les informations de la classe sélectionnée
+        if has_selection:
+            class_name = self.classes_list.currentItem().data(Qt.UserRole)
+            tag_name = f"class:{class_name}"
+            count = len(self.db.tags.get(tag_name, []))
+            self.info_label.setText(f"Classe: {class_name}\nUtilisée par {count} objet{'s' if count > 1 else ''}")
+        else:
+            self.info_label.clear()
+    
+    def search_selected_class(self):
+        """Lance une recherche avec la classe sélectionnée"""
+        item = self.classes_list.currentItem()
+        if item:
+            self.search_class(item)
+    
+    def search_class(self, item):
+        """Recherche les objets avec la classe sélectionnée"""
+        class_name = item.data(Qt.UserRole)
+        self.parent().search_input.setText(f"#class:{class_name}")
+        self.parent().perform_search()
+        self.accept()
+    
+    def delete_selected_class(self):
+        """Supprime la classe sélectionnée de tous les objets"""
+        item = self.classes_list.currentItem()
+        if not item:
+            return
+        
+        class_name = item.data(Qt.UserRole)
+        tag_name = f"class:{class_name}"
+        count = len(self.db.tags.get(tag_name, []))
+        
+        reply = QMessageBox.question(
+            self,
+            "Confirmation",
+            f"Êtes-vous sûr de vouloir supprimer la classe '{class_name}' ?\n"
+            f"Il sera retiré de {count} objet{'s' if count > 1 else ''}.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Retirer la classe de tous les objets
+            for obj_id in list(self.db.tags.get(tag_name, [])):
+                self.db.remove_tag(obj_id, tag_name)
+            
+            # Supprimer le fichier de tag
+            tag_file = self.db.tag_files.get(tag_name)
+            if tag_file and os.path.exists(tag_file):
+                try:
+                    os.remove(tag_file)
+                except Exception as e:
+                    print(f"Erreur lors de la suppression du fichier {tag_file}: {e}")
+            
+            # Mettre à jour les structures de données
+            if tag_name in self.db.tags:
+                del self.db.tags[tag_name]
+            if tag_name in self.db.tag_files:
+                del self.db.tag_files[tag_name]
+            
+            QMessageBox.information(self, "Succès", f"Classe '{class_name}' supprimée avec succès.")
+            self.load_classes()
 
 class AddFileDialog(QDialog):
     def __init__(self, parent=None, db=None, edit_object=None):
