@@ -8,6 +8,7 @@
     --tag-appliquer-a-tout-les-éléments-importer--
     }
 --Recherche booléenne complète - Essentiel pour l'utilité--
+--Système-de-collections/albums - Organisation visuelle--
 
 ------------------------ A FAIRE ------------------------
 
@@ -66,7 +67,6 @@ Sécurité et Vie Privée{
 
 -----------------------Priorités de Développement (Phase 1)-----------------------
 
-Système de collections/albums - Organisation visuelle
 Prévisualisation avancée - Meilleure UX
 
 ----------------------- EN COURS ---------------------------

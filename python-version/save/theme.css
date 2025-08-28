@@ -1,0 +1,149 @@
+/* Theme CSS pour le gestionnaire de fichiers avec tags */
+/* Vous pouvez personnaliser ces valeurs selon vos préférences */
+
+QMainWindow, QDialog, QWidget {
+    background-color: #2b2b2b;
+    color: #ffffff;
+    border: none;
+}
+
+QLabel {
+    color: #ffffff;
+}
+
+QLineEdit, QTextEdit, QComboBox {
+    background-color: #3c3f41;
+    color: #ffffff;
+    border: 1px solid #555555;
+    border-radius: 3px;
+    padding: 5px;
+}
+
+QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
+    border: 1px solid #4da6ff;
+}
+
+QPushButton {
+    background-color: #4a4a4a;
+    color: #ffffff;
+    border: 1px solid #555555;
+    border-radius: 3px;
+    padding: 5px 10px;
+}
+
+QPushButton:hover {
+    background-color: #5a5a5a;
+}
+
+QPushButton:pressed {
+    background-color: #3a3a3a;
+}
+
+QListWidget {
+    background-color: #3c3f41;
+    color: #ffffff;
+    border: 1px solid #555555;
+    border-radius: 3px;
+}
+
+QListWidget::item {
+    padding: 5px;
+}
+
+QListWidget::item:selected {
+    background-color: #4a4a4a;
+}
+
+QListWidget::item:hover {
+    background-color: #5a5a5a;
+}
+
+QTabWidget::pane {
+    border: 1px solid #555555;
+    background-color: #3c3f41;
+}
+
+QTabBar::tab {
+    background-color: #4a4a4a;
+    color: #ffffff;
+    padding: 8px 12px;
+    border-top-left-radius: 3px;
+    border-top-right-radius: 3px;
+}
+
+QTabBar::tab:selected {
+    background-color: #3c3f41;
+    border-bottom: 2px solid #4da6ff;
+}
+
+QGroupBox {
+    font-weight: bold;
+    border: 1px solid #555555;
+    border-radius: 5px;
+    margin-top: 10px;
+    padding-top: 15px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top center;
+    padding: 0 5px;
+}
+
+QMenuBar {
+    background-color: #3c3f41;
+    color: #ffffff;
+}
+
+QMenuBar::item {
+    background-color: transparent;
+    padding: 5px 10px;
+}
+
+QMenuBar::item:selected {
+    background-color: #4a4a4a;
+}
+
+QMenu {
+    background-color: #3c3f41;
+    color: #ffffff;
+    border: 1px solid #555555;
+}
+
+QMenu::item:selected {
+    background-color: #4a4a4a;
+}
+
+QStatusBar {
+    background-color: #3c3f41;
+    color: #ffffff;
+}
+
+QScrollBar:vertical {
+    background-color: #3c3f41;
+    width: 12px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #5a5a5a;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #6a6a6a;
+}
+
+/* Personnalisation supplémentaire */
+#preview_area {
+    border: 2px dashed #666666;
+    background-color: #2b2b2b;
+    border-radius: 5px;
+}
+
+#search_input {
+    font-size: 14px;
+}
+
+#results_list {
+    font-family: "Segoe UI", Arial, sans-serif;
+}

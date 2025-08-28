@@ -35,6 +35,11 @@ class Config:
         """Marque le premier démarrage comme terminé"""
         self.settings.setValue("first_run", False)
     
+    def get_theme_file(self):
+        """Retourne le chemin du fichier de thème"""
+        data_dir = self.get_data_dir()
+        return os.path.join(data_dir, "theme.css")
+
     def get_dark_mode(self):
         """Retourne l'état du mode sombre"""
         return self.settings.value("dark_mode", False, type=bool)
@@ -653,8 +658,6 @@ class TagDatabase:
             return self.evaluate_simple_term(pattern)
         
         return results
-
-# ... (le reste du code reste inchangé jusqu'à la classe MainWindow)
 
 class CollectionDialog(QDialog):
     """Boîte de dialogue pour créer ou modifier une collection"""
@@ -1431,28 +1434,320 @@ class MainWindow(QMainWindow):
             self.apply_light_theme()
     
     def apply_dark_theme(self):
-        """Applique le thème sombre"""
-        dark_palette = QPalette()
-        dark_palette.setColor(QPalette.Window, QColor(53, 53, 53))
-        dark_palette.setColor(QPalette.WindowText, Qt.white)
-        dark_palette.setColor(QPalette.Base, QColor(25, 25, 25))
-        dark_palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
-        dark_palette.setColor(QPalette.ToolTipBase, Qt.white)
-        dark_palette.setColor(QPalette.ToolTipText, Qt.white)
-        dark_palette.setColor(QPalette.Text, Qt.white)
-        dark_palette.setColor(QPalette.Button, QColor(53, 53, 53))
-        dark_palette.setColor(QPalette.ButtonText, Qt.white)
-        dark_palette.setColor(QPalette.BrightText, Qt.red)
-        dark_palette.setColor(QPalette.Link, QColor(42, 130, 218))
-        dark_palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
-        dark_palette.setColor(QPalette.HighlightedText, Qt.black)
+        """Applique le thème sombre depuis le fichier CSS"""
+        theme_file = self.config.get_theme_file()
+        if os.path.exists(theme_file):
+            try:
+                with open(theme_file, 'r', encoding='utf-8') as f:
+                    style = f.read()
+                self.setStyleSheet(style)
+            except Exception as e:
+                print(f"Erreur lors du chargement du thème: {e}")
+                self.apply_default_dark_theme()
+        else:
+            self.apply_default_dark_theme()
+            self.save_default_theme()
+    
+    def apply_default_dark_theme(self):
+        """Applique le thème sombre par défaut"""
+        default_dark_theme = """
+        QMainWindow, QDialog, QWidget {
+            background-color: #2b2b2b;
+            color: #ffffff;
+            border: none;
+        }
         
-        QApplication.setPalette(dark_palette)
-    
+        QLabel {
+            color: #ffffff;
+        }
+        
+        QLineEdit, QTextEdit, QComboBox {
+            background-color: #3c3f41;
+            color: #ffffff;
+            border: 1px solid #555555;
+            border-radius: 3px;
+            padding: 5px;
+        }
+        
+        QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
+            border: 1px solid #4da6ff;
+        }
+        
+        QPushButton {
+            background-color: #4a4a4a;
+            color: #ffffff;
+            border: 1px solid #555555;
+            border-radius: 3px;
+            padding: 5px 10px;
+        }
+        
+        QPushButton:hover {
+            background-color: #5a5a5a;
+        }
+        
+        QPushButton:pressed {
+            background-color: #3a3a3a;
+        }
+        
+        QListWidget {
+            background-color: #3c3f41;
+            color: #ffffff;
+            border: 1px solid #555555;
+            border-radius: 3px;
+        }
+        
+        QListWidget::item {
+            padding: 5px;
+        }
+        
+        QListWidget::item:selected {
+            background-color: #4a4a4a;
+        }
+        
+        QListWidget::item:hover {
+            background-color: #5a5a5a;
+        }
+        
+        QTabWidget::pane {
+            border: 1px solid #555555;
+            background-color: #3c3f41;
+        }
+        
+        QTabBar::tab {
+            background-color: #4a4a4a;
+            color: #ffffff;
+            padding: 8px 12px;
+            border-top-left-radius: 3px;
+            border-top-right-radius: 3px;
+        }
+        
+        QTabBar::tab:selected {
+            background-color: #3c3f41;
+            border-bottom: 2px solid #4da6ff;
+        }
+        
+        QGroupBox {
+            font-weight: bold;
+            border: 1px solid #555555;
+            border-radius: 5px;
+            margin-top: 10px;
+            padding-top: 15px;
+        }
+        
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            subcontrol-position: top center;
+            padding: 0 5px;
+        }
+        
+        QMenuBar {
+            background-color: #3c3f41;
+            color: #ffffff;
+        }
+        
+        QMenuBar::item {
+            background-color: transparent;
+            padding: 5px 10px;
+        }
+        
+        QMenuBar::item:selected {
+            background-color: #4a4a4a;
+        }
+        
+        QMenu {
+            background-color: #3c3f41;
+            color: #ffffff;
+            border: 1px solid #555555;
+        }
+        
+        QMenu::item:selected {
+            background-color: #4a4a4a;
+        }
+        
+        QStatusBar {
+            background-color: #3c3f41;
+            color: #ffffff;
+        }
+        
+        QScrollBar:vertical {
+            background-color: #3c3f41;
+            width: 12px;
+        }
+        
+        QScrollBar::handle:vertical {
+            background-color: #5a5a5a;
+            border-radius: 6px;
+        }
+        
+        QScrollBar::handle:vertical:hover {
+            background-color: #6a6a6a;
+        }
+        """
+        self.setStyleSheet(default_dark_theme)
+
     def apply_light_theme(self):
-        """Applique le thème clair"""
-        QApplication.setPalette(QApplication.style().standardPalette())
+        """Applique le thème clair (style par défaut de Qt)"""
+        self.setStyleSheet("")
     
+    def save_default_theme(self):
+        """Sauvegarde le thème par défaut dans un fichier CSS"""
+        theme_file = self.config.get_theme_file()
+        default_theme = """/* Theme CSS pour le gestionnaire de fichiers avec tags */
+/* Vous pouvez personnaliser ces valeurs selon vos préférences */
+
+QMainWindow, QDialog, QWidget {
+    background-color: #2b2b2b;
+    color: #ffffff;
+    border: none;
+}
+
+QLabel {
+    color: #ffffff;
+}
+
+QLineEdit, QTextEdit, QComboBox {
+    background-color: #3c3f41;
+    color: #ffffff;
+    border: 1px solid #555555;
+    border-radius: 3px;
+    padding: 5px;
+}
+
+QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
+    border: 1px solid #4da6ff;
+}
+
+QPushButton {
+    background-color: #4a4a4a;
+    color: #ffffff;
+    border: 1px solid #555555;
+    border-radius: 3px;
+    padding: 5px 10px;
+}
+
+QPushButton:hover {
+    background-color: #5a5a5a;
+}
+
+QPushButton:pressed {
+    background-color: #3a3a3a;
+}
+
+QListWidget {
+    background-color: #3c3f41;
+    color: #ffffff;
+    border: 1px solid #555555;
+    border-radius: 3px;
+}
+
+QListWidget::item {
+    padding: 5px;
+}
+
+QListWidget::item:selected {
+    background-color: #4a4a4a;
+}
+
+QListWidget::item:hover {
+    background-color: #5a5a5a;
+}
+
+QTabWidget::pane {
+    border: 1px solid #555555;
+    background-color: #3c3f41;
+}
+
+QTabBar::tab {
+    background-color: #4a4a4a;
+    color: #ffffff;
+    padding: 8px 12px;
+    border-top-left-radius: 3px;
+    border-top-right-radius: 3px;
+}
+
+QTabBar::tab:selected {
+    background-color: #3c3f41;
+    border-bottom: 2px solid #4da6ff;
+}
+
+QGroupBox {
+    font-weight: bold;
+    border: 1px solid #555555;
+    border-radius: 5px;
+    margin-top: 10px;
+    padding-top: 15px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top center;
+    padding: 0 5px;
+}
+
+QMenuBar {
+    background-color: #3c3f41;
+    color: #ffffff;
+}
+
+QMenuBar::item {
+    background-color: transparent;
+    padding: 5px 10px;
+}
+
+QMenuBar::item:selected {
+    background-color: #4a4a4a;
+}
+
+QMenu {
+    background-color: #3c3f41;
+    color: #ffffff;
+    border: 1px solid #555555;
+}
+
+QMenu::item:selected {
+    background-color: #4a4a4a;
+}
+
+QStatusBar {
+    background-color: #3c3f41;
+    color: #ffffff;
+}
+
+QScrollBar:vertical {
+    background-color: #3c3f41;
+    width: 12px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #5a5a5a;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #6a6a6a;
+}
+
+/* Personnalisation supplémentaire */
+#preview_area {
+    border: 2px dashed #666666;
+    background-color: #2b2b2b;
+    border-radius: 5px;
+}
+
+#search_input {
+    font-size: 14px;
+}
+
+#results_list {
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+"""
+        try:
+            with open(theme_file, 'w', encoding='utf-8') as f:
+                f.write(default_theme)
+        except Exception as e:
+            print(f"Erreur lors de la sauvegarde du thème: {e}")
+
     def toggle_dark_mode(self):
         """Bascule entre le mode sombre et le mode clair"""
         current = self.config.get_dark_mode()
