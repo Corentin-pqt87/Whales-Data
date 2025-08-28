@@ -49,3 +49,9 @@ Il y a plusieur moyen de les séparer :
 6.	Cas particulier « XOR » on prend les résultats d’un « AND » et d’un « OR » mais on retourne en premier les résultats du « AND », puis suivras les résultats du « OR » 
 7.	Si deux mots sont collés par un « : » cela signifie que le premier et un dossier et l’autre un tag (obligatoirement un tag), mais le second peut-être un regroupement dans une parentaise. (Exemple : ville:(paris , limoges) le résultat renverra les objets qui sont dans ville et de tag « paris » ou « limoges ») cala permet de mieux trier les tags et de permettre plus de recherche. 
 On peut regrouper les mots de recherche dans des parentaises afin de mieux préciser ce que l’on veut. Si on ne précise pas le dossier ou sont ranger les fichiers de tag alors on prend en compte le tag même si le moteur doit aller le chercher dans un dossier.
+
+## Recherche par Collection
+Les objets peuvent etre stoker dans des collections, alors pour les recherches le préfixe est "@"
+
+# Personnalisation
+Vous pouvez personnaliser le theme de l'application (python, exe et web version), via un fichier css disponible dans "style" pour la web version, dirrectement a coté du root.py pour la version python et dans "_internal" puis ".css" pour la version exe.
