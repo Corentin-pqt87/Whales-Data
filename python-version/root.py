@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QTreeWidget, QTreeWidgetItem, QTabWidget, QGroupBox, QDialog,
                              QMenu, QAction, QCompleter, QInputDialog, QProgressDialog,
                              QCheckBox)
-from PyQt5.QtCore import Qt, QUrl, QSettings
+from PyQt5.QtCore import Qt, QUrl, QSettings, QStringListModel
 from PyQt5.QtGui import QIcon, QFont, QDesktopServices, QPixmap, QPalette, QColor
 
 class Config:
@@ -48,6 +48,41 @@ class Config:
         data_dir = self.get_data_dir()
         return os.path.join(data_dir, "search_history.json")
 
+class Collection:
+    """Représente une collection d'objets"""
+    def __init__(self, name: str, description: str = ""):
+        self.name = name
+        self.description = description
+        self.id = f"collection_{uuid.uuid4().hex[:8]}"
+        self.object_ids: Set[str] = set()
+        self.created_at = datetime.datetime.now().isoformat()
+        self.updated_at = self.created_at
+    
+    def to_dict(self):
+        """Convertit la collection en dictionnaire pour sérialisation"""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "id": self.id,
+            "object_ids": list(self.object_ids),
+            "created_at": self.created_at,
+            "updated_at": self.updated_at
+        }
+    
+    def add_object(self, obj_id: str):
+        """Ajoute un objet à la collection"""
+        self.object_ids.add(obj_id)
+        self.updated_at = datetime.datetime.now().isoformat()
+    
+    def remove_object(self, obj_id: str):
+        """Retire un objet de la collection"""
+        if obj_id in self.object_ids:
+            self.object_ids.remove(obj_id)
+            self.updated_at = datetime.datetime.now().isoformat()
+    
+    def contains_object(self, obj_id: str) -> bool:
+        """Vérifie si la collection contient un objet"""
+        return obj_id in self.object_ids
 
 class SearchHistory:
     """Gère l'historique des recherches"""
@@ -154,13 +189,16 @@ class TagDatabase:
         self.data_dir = data_dir
         self.objects_dir = os.path.join(data_dir, "Objects")
         self.tags_dir = os.path.join(data_dir, "Tags")
+        self.collections_dir = os.path.join(data_dir, "Collections")  # Nouveau dossier pour les collections
         self.objects: Dict[str, FileObject] = {}  # ID -> FileObject
         self.tags: Dict[str, Set[str]] = {}       # Tag -> Set d'IDs
         self.tag_files: Dict[str, str] = {}       # Tag -> Chemin du fichier
+        self.collections: Dict[str, Collection] = {}  # ID -> Collection
         
         # Créer les répertoires de données s'ils n'existent pas
         os.makedirs(self.objects_dir, exist_ok=True)
         os.makedirs(self.tags_dir, exist_ok=True)
+        os.makedirs(self.collections_dir, exist_ok=True)  # Créer le dossier collections
         self.load_data()
     
     def load_data(self):
@@ -195,6 +233,22 @@ class TagDatabase:
                             self.tag_files[tag_name] = os.path.join(self.tags_dir, filename)
                     except Exception as e:
                         print(f"Erreur lors du chargement du tag {filename}: {e}")
+        
+        # Charger les collections
+        if os.path.exists(self.collections_dir):
+            for filename in os.listdir(self.collections_dir):
+                if filename.endswith(".json"):
+                    try:
+                        with open(os.path.join(self.collections_dir, filename), 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            collection = Collection(data["name"], data["description"])
+                            collection.id = data["id"]
+                            collection.object_ids = set(data["object_ids"])
+                            collection.created_at = data["created_at"]
+                            collection.updated_at = data["updated_at"]
+                            self.collections[collection.id] = collection
+                    except Exception as e:
+                        print(f"Erreur lors du chargement de la collection {filename}: {e}")
     
     def add_object(self, obj: FileObject) -> Optional[str]:
         """Ajoute un objet à la base de données si l'emplacement n'existe pas déjà"""
@@ -233,6 +287,12 @@ class TagDatabase:
         # Retirer l'objet de tous les tags
         for tag in self.get_object_tags(obj_id):
             self.remove_tag(obj_id, tag)
+        
+        # Retirer l'objet de toutes les collections
+        for collection in self.collections.values():
+            if collection.contains_object(obj_id):
+                collection.remove_object(obj_id)
+                self.save_collection(collection)
         
         # Supprimer le fichier de l'objet
         obj_file = os.path.join(self.objects_dir, f"{obj_id}.json")
@@ -286,6 +346,80 @@ class TagDatabase:
             with open(tag_file_path, 'w', encoding='utf-8') as f:
                 json.dump(list(self.tags[tag]), f, ensure_ascii=False, indent=4)
     
+    # Méthodes pour les collections
+    def create_collection(self, name: str, description: str = "") -> Optional[Collection]:
+        """Crée une nouvelle collection"""
+        if not name.strip():
+            return None
+        
+        # Vérifier si une collection avec le même nom existe déjà
+        for collection in self.collections.values():
+            if collection.name.lower() == name.lower():
+                return None
+        
+        collection = Collection(name, description)
+        self.collections[collection.id] = collection
+        self.save_collection(collection)
+        return collection
+    
+    def delete_collection(self, collection_id: str) -> bool:
+        """Supprime une collection"""
+        if collection_id not in self.collections:
+            return False
+        
+        # Supprimer le fichier de la collection
+        collection_file = os.path.join(self.collections_dir, f"{collection_id}.json")
+        if os.path.exists(collection_file):
+            try:
+                os.remove(collection_file)
+            except Exception as e:
+                print(f"Erreur lors de la suppression du fichier {collection_file}: {e}")
+        
+        # Retirer la collection de la mémoire
+        del self.collections[collection_id]
+        return True
+    
+    def save_collection(self, collection: Collection) -> None:
+        """Sauvegarde une collection dans un fichier JSON"""
+        collection_path = os.path.join(self.collections_dir, f"{collection.id}.json")
+        with open(collection_path, 'w', encoding='utf-8') as f:
+            json.dump(collection.to_dict(), f, ensure_ascii=False, indent=4)
+    
+    def add_object_to_collection(self, obj_id: str, collection_id: str) -> bool:
+        """Ajoute un objet à une collection"""
+        if obj_id not in self.objects or collection_id not in self.collections:
+            return False
+        
+        collection = self.collections[collection_id]
+        collection.add_object(obj_id)
+        self.save_collection(collection)
+        return True
+    
+    def remove_object_from_collection(self, obj_id: str, collection_id: str) -> bool:
+        """Retire un objet d'une collection"""
+        if collection_id not in self.collections:
+            return False
+        
+        collection = self.collections[collection_id]
+        collection.remove_object(obj_id)
+        self.save_collection(collection)
+        return True
+    
+    def get_collections_for_object(self, obj_id: str) -> List[Collection]:
+        """Retourne toutes les collections contenant un objet"""
+        return [collection for collection in self.collections.values() 
+                if collection.contains_object(obj_id)]
+    
+    def search_by_collection(self, collection_name: str) -> List[FileObject]:
+        """Recherche des objets par nom de collection"""
+        results = []
+        for collection in self.collections.values():
+            if collection_name.lower() in collection.name.lower():
+                for obj_id in collection.object_ids:
+                    if obj_id in self.objects:
+                        results.append(self.objects[obj_id])
+        return results
+    
     def search_by_name(self, name: str) -> List[FileObject]:
         """Recherche des objets par nom (recherche partielle insensible à la casse)"""
         results = []
@@ -325,49 +459,6 @@ class TagDatabase:
             return list(self.objects.values())
         
         try:
-            # Debug: afficher la requête parsée
-            parsed_query = self.parse_boolean_query(query)
-            print(f"Requête parsée: {parsed_query}")
-            
-            # Évaluer la requête
-            result_ids = self.evaluate_boolean_expression(parsed_query)
-            
-            # Convertir les IDs en objets
-            results = []
-            for obj_id in result_ids:
-                if obj_id in self.objects:
-                    results.append(self.objects[obj_id])
-            
-            print(f"Résultats trouvés: {len(results)}")
-            return results
-            
-        except Exception as e:
-            print(f"Erreur dans la recherche avancée: {e}")
-            import traceback
-            traceback.print_exc()
-            # Fallback vers la recherche simple
-            return self.search_by_name(query)
-
-    def location_exists(self, location: str) -> bool:
-        """Vérifie si un emplacement existe déjà dans la base de données"""
-        for obj in self.objects.values():
-            if obj.location == location:
-                return True
-        return False
-
-    def get_object_by_location(self, location: str) -> Optional[FileObject]:
-        """Retourne l'objet correspondant à un emplacement"""
-        for obj in self.objects.values():
-            if obj.location == location:
-                return obj
-        return None
-    
-    def advanced_search(self, query: str) -> List[FileObject]:
-        """Recherche avancée avec syntaxe booléenne complète"""
-        if not query.strip():
-            return list(self.objects.values())
-        
-        try:
             # Parser la requête booléenne
             parsed_query = self.parse_boolean_query(query)
             
@@ -386,6 +477,20 @@ class TagDatabase:
             print(f"Erreur dans la recherche avancée: {e}")
             # Fallback vers la recherche simple
             return self.search_by_name(query)
+    
+    def location_exists(self, location: str) -> bool:
+        """Vérifie si un emplacement existe déjà dans la base de données"""
+        for obj in self.objects.values():
+            if obj.location == location:
+                return True
+        return False
+
+    def get_object_by_location(self, location: str) -> Optional[FileObject]:
+        """Retourne l'objet correspondant à un emplacement"""
+        for obj in self.objects.values():
+            if obj.location == location:
+                return obj
+        return None
     
     def parse_boolean_query(self, query: str) -> Union[str, dict]:
         """
@@ -498,6 +603,12 @@ class TagDatabase:
             objects = self.search_by_tag(tag_name)
             return {obj.id for obj in objects}
         
+        # Collection (commence par @)
+        elif term.startswith('@'):
+            collection_name = term[1:].strip()
+            objects = self.search_by_collection(collection_name)
+            return {obj.id for obj in objects}
+        
         # Recherche par nom (avec wildcards)
         else:
             objects = self.search_by_name(term)
@@ -543,139 +654,18 @@ class TagDatabase:
         
         return results
 
-class ImportFolderDialog(QDialog):
-    """Boîte de dialogue pour l'import de dossier avec options"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Importer un dossier")
-        self.setModal(True)
-        self.setMinimumWidth(400)
-        self.init_ui()
-    
-    def init_ui(self):
-        layout = QVBoxLayout(self)
-        
-        # Type de fichier par défaut
-        type_layout = QHBoxLayout()
-        type_layout.addWidget(QLabel("Type de fichier par défaut:"))
-        self.type_combo = QComboBox()
-        self.type_combo.addItems(["image", "video", "audio", "document", "autre"])
-        type_layout.addWidget(self.type_combo)
-        layout.addLayout(type_layout)
-        
-        # Tags
-        tags_layout = QVBoxLayout()
-        tags_layout.addWidget(QLabel("Tags à appliquer (optionnel):"))
-        self.tags_input = QLineEdit()
-        self.tags_input.setPlaceholderText("Exemple: vacances été 2024")
-        tags_layout.addWidget(self.tags_input)
-        tags_layout.addWidget(QLabel("Séparez les tags par des espaces, virgules ou points-virgules"))
-        layout.addLayout(tags_layout)
-        
-        # Options avancées
-        advanced_group = QGroupBox("Options avancées")
-        advanced_layout = QVBoxLayout()
-        
-        self.recursive_check = QCheckBox("Importer les sous-dossiers récursivement")
-        self.recursive_check.setChecked(True)
-        self.recursive_check.setToolTip("Recherche les fichiers dans tous les sous-dossiers")
-        advanced_layout.addWidget(self.recursive_check)
-        
-        advanced_group.setLayout(advanced_layout)
-        layout.addWidget(advanced_group)
-        
-        # Boutons
-        button_layout = QHBoxLayout()
-        self.cancel_button = QPushButton("Annuler")
-        self.cancel_button.clicked.connect(self.reject)
-        self.import_button = QPushButton("Importer")
-        self.import_button.clicked.connect(self.accept)
-        self.import_button.setDefault(True)
-        
-        button_layout.addWidget(self.cancel_button)
-        button_layout.addWidget(self.import_button)
-        layout.addLayout(button_layout)
-    
-    def get_data(self):
-        """Retourne les données saisies"""
-        tags = self.parse_tags(self.tags_input.text())
-        
-        return {
-            "file_type": self.type_combo.currentText(),
-            "tags": tags,
-            "recursive": self.recursive_check.isChecked()
-        }
-    
-    def parse_tags(self, tags_input: str) -> List[str]:
-        """Parse une chaîne de tags en liste de tags nettoyés"""
-        if not tags_input.strip():
-            return []
-        
-        # Séparer par espaces, virgules, points-virgules
-        raw_tags = re.split(r'[,\s;]+', tags_input.strip())
-        cleaned_tags = []
-        for tag in raw_tags:
-            cleaned_tag = tag.strip().lstrip('#')
-            if cleaned_tag:
-                cleaned_tags.append(cleaned_tag)
-        
-        return cleaned_tags
+# ... (le reste du code reste inchangé jusqu'à la classe MainWindow)
 
-class FirstRunDialog(QDialog):
-    """Boîte de dialogue pour le premier démarrage"""
-    def __init__(self, parent=None):
+class CollectionDialog(QDialog):
+    """Boîte de dialogue pour créer ou modifier une collection"""
+    def __init__(self, parent=None, collection=None):
         super().__init__(parent)
-        self.setWindowTitle("Configuration initiale")
-        self.setModal(True)
-        self.init_ui()
-    
-    def init_ui(self):
-        layout = QVBoxLayout(self)
-        
-        layout.addWidget(QLabel("Bienvenue dans le Gestionnaire de Fichiers par Tags!"))
-        layout.addWidget(QLabel("Veuillez choisir un emplacement pour stocker vos données:"))
-        
-        # Sélection du dossier
-        folder_layout = QHBoxLayout()
-        folder_layout.addWidget(QLabel("Dossier de données:"))
-        self.folder_input = QLineEdit()
-        self.folder_input.setText(os.path.join(os.path.expanduser("~"), "TagManagerData"))
-        folder_layout.addWidget(self.folder_input)
-        
-        self.browse_button = QPushButton("Parcourir...")
-        self.browse_button.clicked.connect(self.browse_folder)
-        folder_layout.addWidget(self.browse_button)
-        
-        layout.addLayout(folder_layout)
-        
-        # Boutons
-        button_layout = QHBoxLayout()
-        self.ok_button = QPushButton("OK")
-        self.ok_button.clicked.connect(self.accept)
-        button_layout.addWidget(self.ok_button)
-        
-        layout.addLayout(button_layout)
-    
-    def browse_folder(self):
-        """Ouvre une boîte de dialogue pour sélectionner un dossier"""
-        folder = QFileDialog.getExistingDirectory(self, "Sélectionner le dossier de données")
-        if folder:
-            self.folder_input.setText(folder)
-    
-    def get_data_dir(self):
-        """Retourne le dossier de données choisi"""
-        return self.folder_input.text()
-
-class FileDialog(QDialog):
-    """Boîte de dialogue pour ajouter ou modifier un fichier"""
-    def __init__(self, parent=None, obj=None):
-        super().__init__(parent)
-        self.obj = obj
-        if obj:
-            self.setWindowTitle("Modifier le fichier")
+        self.collection = collection
+        if collection:
+            self.setWindowTitle("Modifier la collection")
             self.is_edit = True
         else:
-            self.setWindowTitle("Ajouter un nouveau fichier")
+            self.setWindowTitle("Créer une nouvelle collection")
             self.is_edit = False
         self.setModal(True)
         self.init_ui()
@@ -683,49 +673,25 @@ class FileDialog(QDialog):
     def init_ui(self):
         layout = QVBoxLayout(self)
         
-        # Champs de formulaire
-        form_layout = QVBoxLayout()
-        
+        # Nom de la collection
         name_layout = QHBoxLayout()
-        name_layout.addWidget(QLabel("Nom:"))
+        name_layout.addWidget(QLabel("Nom de la collection:"))
         self.name_input = QLineEdit()
         name_layout.addWidget(self.name_input)
+        layout.addLayout(name_layout)
         
-        type_layout = QHBoxLayout()
-        type_layout.addWidget(QLabel("Type:"))
-        self.type_combo = QComboBox()
-        self.type_combo.addItems(["image", "video", "audio", "document", "autre"])
-        type_layout.addWidget(self.type_combo)
-        
-        # Sélection du type d'emplacement
-        location_type_layout = QHBoxLayout()
-        location_type_layout.addWidget(QLabel("Type d'emplacement:"))
-        self.location_type_combo = QComboBox()
-        self.location_type_combo.addItems(["Interne (fichier local)", "Externe (URL web)"])
-        self.location_type_combo.currentTextChanged.connect(self.update_location_field)
-        location_type_layout.addWidget(self.location_type_combo)
-        
-        # Champ pour l'emplacement (sera mis à jour selon le type)
-        self.location_layout = QHBoxLayout()
-        self.location_layout.addWidget(QLabel("Emplacement:"))
-        self.location_input = QLineEdit()
-        self.location_layout.addWidget(self.location_input)
-        
-        # Bouton pour parcourir les fichiers locaux
-        self.browse_button = QPushButton("Parcourir...")
-        self.browse_button.clicked.connect(self.browse_file)
-        self.location_layout.addWidget(self.browse_button)
-        
+        # Description
         description_layout = QVBoxLayout()
         description_layout.addWidget(QLabel("Description:"))
         self.description_input = QTextEdit()
+        self.description_input.setMaximumHeight(100)
         description_layout.addWidget(self.description_input)
+        layout.addLayout(description_layout)
         
-        form_layout.addLayout(name_layout)
-        form_layout.addLayout(type_layout)
-        form_layout.addLayout(location_type_layout)
-        form_layout.addLayout(self.location_layout)
-        form_layout.addLayout(description_layout)
+        # Remplir les champs si on est en mode édition
+        if self.is_edit and self.collection:
+            self.name_input.setText(self.collection.name)
+            self.description_input.setPlainText(self.collection.description)
         
         # Boutons
         button_layout = QHBoxLayout()
@@ -736,49 +702,225 @@ class FileDialog(QDialog):
         button_layout.addWidget(self.cancel_button)
         button_layout.addWidget(self.ok_button)
         
-        layout.addLayout(form_layout)
         layout.addLayout(button_layout)
-        
-        # Remplir les champs si on est en mode édition
-        if self.is_edit and self.obj:
-            self.name_input.setText(self.obj.name)
-            self.description_input.setPlainText(self.obj.description)
-            self.type_combo.setCurrentText(self.obj.file_type)
-            
-            if self.obj.is_external():
-                self.location_type_combo.setCurrentText("Externe (URL web)")
-            else:
-                self.location_type_combo.setCurrentText("Interne (fichier local)")
-            
-            self.location_input.setText(self.obj.location)
-        
-        # Initialiser l'interface
-        self.update_location_field()
-    
-    def update_location_field(self):
-        """Met à jour le champ d'emplacement selon le type sélectionné"""
-        location_type = self.location_type_combo.currentText()
-        if location_type == "Interne (fichier local)":
-            self.location_input.setPlaceholderText("Chemin du fichier local...")
-            self.browse_button.setVisible(True)
-        else:
-            self.location_input.setPlaceholderText("URL (http://, https://)...")
-            self.browse_button.setVisible(False)
-    
-    def browse_file(self):
-        """Ouvre une boîte de dialogue pour sélectionner un fichier local"""
-        file_path, _ = QFileDialog.getOpenFileName(self, "Sélectionner un fichier")
-        if file_path:
-            self.location_input.setText(file_path)
     
     def get_data(self):
         """Retourne les données saisies"""
         return {
-            "name": self.name_input.text(),
-            "description": self.description_input.toPlainText(),
-            "type": self.type_combo.currentText(),
-            "location": self.location_input.text()
+            "name": self.name_input.text().strip(),
+            "description": self.description_input.toPlainText().strip()
         }
+
+class CollectionsDialog(QDialog):
+    """Boîte de dialogue pour gérer les collections"""
+    def __init__(self, parent=None, db=None):
+        super().__init__(parent)
+        self.db = db
+        self.setWindowTitle("Gestion des collections")
+        self.setModal(True)
+        self.setMinimumSize(600, 400)
+        self.init_ui()
+        self.load_collections()
+    
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Boutons d'action
+        action_layout = QHBoxLayout()
+        self.create_button = QPushButton("Nouvelle collection")
+        self.create_button.clicked.connect(self.create_collection)
+        self.edit_button = QPushButton("Modifier")
+        self.edit_button.clicked.connect(self.edit_collection)
+        self.delete_button = QPushButton("Supprimer")
+        self.delete_button.clicked.connect(self.delete_collection)
+        self.view_button = QPushButton("Voir les objets")
+        self.view_button.clicked.connect(self.view_collection_objects)
+        
+        action_layout.addWidget(self.create_button)
+        action_layout.addWidget(self.edit_button)
+        action_layout.addWidget(self.delete_button)
+        action_layout.addWidget(self.view_button)
+        layout.addLayout(action_layout)
+        
+        # Liste des collections
+        self.collections_list = QListWidget()
+        self.collections_list.itemSelectionChanged.connect(self.update_buttons)
+        self.collections_list.itemDoubleClicked.connect(self.view_collection_objects)
+        layout.addWidget(self.collections_list)
+        
+        # Informations sur la collection sélectionnée
+        self.info_label = QLabel()
+        self.info_label.setWordWrap(True)
+        layout.addWidget(self.info_label)
+        
+        # Boutons de fermeture
+        close_button = QPushButton("Fermer")
+        close_button.clicked.connect(self.accept)
+        layout.addWidget(close_button)
+        
+        self.update_buttons()
+    
+    def load_collections(self):
+        """Charge la liste des collections"""
+        self.collections_list.clear()
+        if not self.db:
+            return
+        
+        for collection in self.db.collections.values():
+            item = QListWidgetItem(f"{collection.name} ({len(collection.object_ids)} objets)")
+            item.setData(Qt.UserRole, collection.id)
+            self.collections_list.addItem(item)
+    
+    def update_buttons(self):
+        """Met à jour l'état des boutons selon la sélection"""
+        has_selection = self.collections_list.currentItem() is not None
+        self.edit_button.setEnabled(has_selection)
+        self.delete_button.setEnabled(has_selection)
+        self.view_button.setEnabled(has_selection)
+        
+        # Afficher les informations de la collection sélectionnée
+        if has_selection:
+            collection_id = self.collections_list.currentItem().data(Qt.UserRole)
+            collection = self.db.collections.get(collection_id)
+            if collection:
+                self.info_label.setText(
+                    f"Description: {collection.description}\n"
+                    f"Créée le: {collection.created_at}\n"
+                    f"Modifiée le: {collection.updated_at}\n"
+                    f"Nombre d'objets: {len(collection.object_ids)}"
+                )
+        else:
+            self.info_label.clear()
+    
+    def create_collection(self):
+        """Crée une nouvelle collection"""
+        dialog = CollectionDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            data = dialog.get_data()
+            if data["name"]:
+                collection = self.db.create_collection(data["name"], data["description"])
+                if collection:
+                    self.load_collections()
+                    QMessageBox.information(self, "Succès", "Collection créée avec succès.")
+                else:
+                    QMessageBox.warning(self, "Erreur", "Une collection avec ce nom existe déjà.")
+    
+    def edit_collection(self):
+        """Modifie la collection sélectionnée"""
+        item = self.collections_list.currentItem()
+        if not item:
+            return
+        
+        collection_id = item.data(Qt.UserRole)
+        collection = self.db.collections.get(collection_id)
+        if not collection:
+            return
+        
+        dialog = CollectionDialog(self, collection)
+        if dialog.exec() == QDialog.Acepted:
+            data = dialog.get_data()
+            if data["name"]:
+                # Vérifier si le nouveau nom n'est pas déjà utilisé par une autre collection
+                for col in self.db.collections.values():
+                    if col.id != collection_id and col.name.lower() == data["name"].lower():
+                        QMessageBox.warning(self, "Erreur", "Une collection avec ce nom existe déjà.")
+                        return
+                
+                collection.name = data["name"]
+                collection.description = data["description"]
+                collection.updated_at = datetime.datetime.now().isoformat()
+                self.db.save_collection(collection)
+                self.load_collections()
+                QMessageBox.information(self, "Succès", "Collection modifiée avec succès.")
+    
+    def delete_collection(self):
+        """Supprime la collection sélectionnée"""
+        item = self.collections_list.currentItem()
+        if not item:
+            return
+        
+        collection_id = item.data(Qt.UserRole)
+        collection = self.db.collections.get(collection_id)
+        if not collection:
+            return
+        
+        reply = QMessageBox.question(
+            self,
+            "Confirmation",
+            f"Êtes-vous sûr de vouloir supprimer la collection '{collection.name}' ?\n"
+            f"Cette action est irréversible mais ne supprime pas les objets.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            success = self.db.delete_collection(collection_id)
+            if success:
+                self.load_collections()
+                QMessageBox.information(self, "Succès", "Collection supprimée avec succès.")
+            else:
+                QMessageBox.warning(self, "Erreur", "Impossible de supprimer la collection.")
+    
+    def view_collection_objects(self):
+        """Affiche les objets de la collection sélectionnée"""
+        item = self.collections_list.currentItem()
+        if not item:
+            return
+        
+        collection_id = item.data(Qt.UserRole)
+        collection = self.db.collections.get(collection_id)
+        if not collection:
+            return
+        
+        # Créer une boîte de dialogue pour afficher les objets
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Objets de la collection: {collection.name}")
+        dialog.setModal(True)
+        dialog.setMinimumSize(500, 400)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Liste des objets
+        objects_list = QListWidget()
+        
+        for obj_id in collection.object_ids:
+            obj = self.db.objects.get(obj_id)
+            if obj:
+                item = QListWidgetItem(f"{obj.name} ({obj.file_type})")
+                item.setData(Qt.UserRole, obj_id)
+                objects_list.addItem(item)
+        
+        layout.addWidget(QLabel(f"Objets dans la collection ({len(collection.object_ids)}):"))
+        layout.addWidget(objects_list)
+        
+        # Boutons
+        button_layout = QHBoxLayout()
+        remove_button = QPushButton("Retirer l'objet sélectionné")
+        remove_button.clicked.connect(lambda: self.remove_object_from_collection(objects_list, collection))
+        close_button = QPushButton("Fermer")
+        close_button.clicked.connect(dialog.accept)
+        
+        button_layout.addWidget(remove_button)
+        button_layout.addWidget(close_button)
+        layout.addLayout(button_layout)
+        
+        dialog.exec_()
+    
+    def remove_object_from_collection(self, objects_list, collection):
+        """Retire l'objet sélectionné de la collection"""
+        item = objects_list.currentItem()
+        if not item:
+            return
+        
+        obj_id = item.data(Qt.UserRole)
+        success = self.db.remove_object_from_collection(obj_id, collection.id)
+        if success:
+            # Mettre à jour la liste
+            row = objects_list.row(item)
+            objects_list.takeItem(row)
+            QMessageBox.information(self, "Succès", "Objet retiré de la collection.")
+        else:
+            QMessageBox.warning(self, "Erreur", "Impossible de retirer l'objet de la collection.")
 
 class PreviewWidget(QWidget):
     """Widget pour afficher la prévisualisation des fichiers"""
@@ -827,7 +969,7 @@ class PreviewWidget(QWidget):
         
         if obj.is_external():
             # Pour les URLs externes
-            self.preview_area.setText("🌐 Lien externe\n\nCliquez sur 'Ouvrir l'emplacement' pour visiter le site")
+            self.preview_area.setText("🌐 Lien externe\n\nCliquez sur 'Ouvrir' pour visiter le site")
             self.info_label.setText(f"URL: {obj.location}")
         else:
             # Pour les fichiers locaux
@@ -875,1244 +1017,698 @@ class PreviewWidget(QWidget):
                 self.preview_area.setText("❌ Fichier introuvable")
                 self.info_label.setText(f"Le fichier n'existe pas à l'emplacement:\n{file_path}")
 
-class SearchHelpDialog(QDialog):
-    """Boîte de dialogue d'aide pour la syntaxe de recherche"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Aide sur la syntaxe de recherche")
-        self.setModal(True)
-        self.setMinimumSize(600, 400)
-        self.init_ui()
-    
-    def init_ui(self):
-        layout = QVBoxLayout(self)
-        
-        help_text = QTextEdit()
-        help_text.setReadOnly(True)
-        help_text.setHtml("""
-        <h2>Syntaxe de recherche avancée</h2>
-        
-        <h3>Opérateurs booléens:</h3>
-        <ul>
-            <li><b>AND</b> - Intersection: <code>chat AND chien</code></li>
-            <li><b>OR</b> - Union: <code>chat OR chien</code></li>
-            <li><b>NOT</b> - Exclusion: <code>chat NOT chien</code></li>
-        </ul>
-        
-        <h3>Priorité des opérateurs:</h3>
-        <ul>
-            <li>NOT > AND > OR</li>
-            <li>Utilisez les parenthèses pour changer la priorité: <code>(chat OR chien) AND animal</code></li>
-        </ul>
-        
-        <h3>Recherche par tags:</h3>
-        <ul>
-            <li>Utilisez <code>#</code> pour les tags: <code>#vacances #été</code></li>
-            <li>Combine avec les opérateurs: <code>#vacances AND #plage</code></li>
-        </ul>
-        
-        <h3>Recherche exacte:</h3>
-        <ul>
-            <li>Utilisez les guillemets pour la recherche exacte: <code>"mon document.txt"</code></li>
-        </ul>
-        
-        <h3>Wildcards:</h3>
-        <ul>
-            <li><code>*</code> - Zéro ou plusieurs caractères: <code>photo*.jpg</code></li>
-            <li><code>?</code> - Un caractère: <code>image?.png</code></li>
-        </ul>
-        
-        <h3>Exemples:</h3>
-        <ul>
-            <li><code>#vacances AND (photo OR vidéo)</code></li>
-            <li><code>document*.pdf NOT #archives</code></li>
-            <li><code>#travail AND (#important OR #urgent)</code></li>
-        </ul>
-        """)
-        
-        layout.addWidget(help_text)
-        
-        # Bouton de fermeture
-        close_button = QPushButton("Fermer")
-        close_button.clicked.connect(self.accept)
-        layout.addWidget(close_button)
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.config = Config()
         self.db = None
-        self.current_object = None
         self.search_history = SearchHistory()
+        self.current_search_results = []
         self.init_ui()
         self.load_database()
         self.apply_theme()
-        self.load_search_history()  # Charger l'historique au démarrage
     
-    def load_search_history(self):
-        """Charge l'historique des recherches"""
-        history_file = self.config.get_history_file()
-        self.search_history.load_from_file(history_file)
-        self.update_search_suggestions()
-    
-    def save_search_history(self):
-        """Sauvegarde l'historique des recherches"""
-        history_file = self.config.get_history_file()
-        self.search_history.save_to_file(history_file)
-
-    def closeEvent(self, event):
-        """Sauvegarde l'historique lors de la fermeture de l'application"""
-        self.save_search_history()
-        event.accept()
-
-    def update_search_suggestions(self):
-        """Met à jour les suggestions de recherche"""
-        recent_searches = self.search_history.get_recent_searches(10)
-        self.search_input.clear()
-        
-        # Créer un modèle de complétion
-        completer = QCompleter([search[1] for search in recent_searches], self)
-        completer.setCaseSensitivity(Qt.CaseInsensitive)
-        completer.setFilterMode(Qt.MatchContains)
-        self.search_input.setCompleter(completer)
-
-    def import_folder(self):
-        """Importe un dossier avec une boîte de dialogue améliorée"""
-        if not self.db:
-            QMessageBox.warning(self, "Erreur", "Aucune base de données n'est ouverte.")
-            return
-            
-        folder = QFileDialog.getExistingDirectory(self, "Sélectionner le dossier à importer")
-        if not folder:
-            return
-        
-        dialog = ImportFolderDialog(self)
-        if dialog.exec() != QDialog.Accepted:
-            return
-        
-        data = dialog.get_data()
-        file_type = data["file_type"]
-        tags_to_apply = data["tags"]
-        recursive = data["recursive"]
-        
-        # Compter les fichiers
-        import_count = 0
-        duplicate_count = 0
-        error_count = 0
-        tagged_count = 0
-        
-        progress_dialog = QProgressDialog("Importation des fichiers...", "Annuler", 0, 100, self)
-        progress_dialog.setWindowTitle("Importation en cours")
-        progress_dialog.setWindowModality(Qt.WindowModal)
-        
-        # Récupérer la liste de tous les fichiers
-        all_files = []
-        if recursive:
-            # Parcours récursif de tous les sous-dossiers
-            for root_dir, dirs, files in os.walk(folder):
-                for file in files:
-                    file_path = os.path.join(root_dir, file)
-                    all_files.append(file_path)
-        else:
-            # Seulement les fichiers du dossier racine
-            for file in os.listdir(folder):
-                file_path = os.path.join(folder, file)
-                if os.path.isfile(file_path):
-                    all_files.append(file_path)
-        
-        total_files = len(all_files)
-        if total_files == 0:
-            QMessageBox.information(self, "Information", "Aucun fichier trouvé dans le dossier sélectionné.")
-            return
-        
-        progress_dialog.setMaximum(total_files)
-        
-        for i, file_path in enumerate(all_files):
-            if progress_dialog.wasCanceled():
-                break
-            
-            # Vérifier si le fichier existe déjà dans la base
-            if self.db.location_exists(file_path):
-                duplicate_count += 1
-                progress_dialog.setValue(i + 1)
-                continue
-            
-            # Déterminer le type de fichier
-            actual_type = self.get_file_type_from_extension(file_path)
-            if actual_type == "autre":
-                actual_type = file_type  # Utiliser le type par défaut si non reconnu
-            
-            # Créer l'objet
-            try:
-                # Créer une description avec le chemin relatif
-                relative_path = os.path.relpath(file_path, folder)
-                obj = FileObject(
-                    name=os.path.basename(file_path),  # Nom du fichier comme nom par défaut
-                    description=f"Fichier importé depuis: {relative_path}\nDossier: {os.path.basename(folder)}",
-                    file_type=actual_type,
-                    location=file_path
-                )
-                
-                # Ajouter à la base de données
-                obj_id = self.db.add_object(obj)
-                if obj_id is not None:
-                    import_count += 1
-                    
-                    # Appliquer les tags si spécifiés
-                    if tags_to_apply:
-                        for tag in tags_to_apply:
-                            self.db.add_tag(obj_id, tag)
-                        tagged_count += 1
-                else:
-                    duplicate_count += 1
-                    
-            except Exception as e:
-                error_count += 1
-                print(f"Erreur lors de l'import de {file_path}: {e}")
-            
-            progress_dialog.setValue(i + 1)
-            QApplication.processEvents()  # Permet à l'interface de rester responsive
-        
-        progress_dialog.close()
-        
-        # Afficher les résultats
-        self.load_all_objects()
-        
-        message = f"Importation terminée !\n\n" \
-                f"Fichiers importés: {import_count}\n" \
-                f"Fichiers tagués: {tagged_count}\n" \
-                f"Fichiers en double ignorés: {duplicate_count}\n" \
-                f"Erreurs: {error_count}"
-        
-        if tags_to_apply:
-            tags_str = ", ".join([f"#{tag}" for tag in tags_to_apply])
-            message += f"\n\nTags appliqués: {tags_str}"
-        
-        if duplicate_count > 0:
-            message += "\n\nLes fichiers en double ont été automatiquement ignorés."
-        
-        QMessageBox.information(self, "Importation terminée", message)
-
-        def parse_tags(self, tags_input: str) -> List[str]:
-            """Parse une chaîne de tags en liste de tags nettoyés"""
-            if not tags_input.strip():
-                return []
-            
-            # Séparer par espaces, virgules, points-virgules, etc.
-            raw_tags = re.split(r'[,\s;]+', tags_input.strip())
-            
-            # Nettoyer et filtrer les tags vides
-            cleaned_tags = []
-            for tag in raw_tags:
-                cleaned_tag = tag.strip().lstrip('#')  # Enlever les # au début
-                if cleaned_tag:  # Ignorer les tags vides
-                    cleaned_tags.append(cleaned_tag)
-            
-            return cleaned_tags
-
-    def get_file_type_from_extension(self, file_path):
-        """Détermine le type de fichier basé sur l'extension"""
-        extension = os.path.splitext(file_path)[1].lower()
-        
-        image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']
-        video_extensions = ['.mp4', '.avi', '.mov', '.wmv', '.mkv', '.flv']
-        audio_extensions = ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a']
-        document_extensions = ['.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt', '.xls', '.xlsx']
-        
-        if extension in image_extensions:
-            return "image"
-        elif extension in video_extensions:
-            return "video"
-        elif extension in audio_extensions:
-            return "audio"
-        elif extension in document_extensions:
-            return "document"
-        else:
-            return "autre"
-
     def init_ui(self):
-        self.setWindowTitle("Gestionnaire de Fichiers par Tags")
-        self.setGeometry(100, 100, 1400, 800)  # Augmenté la largeur pour accommoder la prévisualisation
+        self.setWindowTitle("Gestionnaire de Fichiers avec Tags")
+        self.setGeometry(100, 100, 1400, 800)  # Augmenter la largeur
         
         # Widget central et layout principal
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
+        main_layout = QHBoxLayout(central_widget)  # Changé en QHBoxLayout
         
-        # Splitter pour diviser la fenêtre
-        splitter = QSplitter(Qt.Horizontal)
+        # Splitter principal
+        main_splitter = QSplitter(Qt.Horizontal)
         
-        # Panel gauche pour la liste des objets
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
+        # Splitter gauche pour liste et détails
+        left_splitter = QSplitter(Qt.Vertical)
+        
+        # Panel supérieur gauche - Recherche et résultats
+        search_panel = QWidget()
+        search_layout = QVBoxLayout(search_panel)
         
         # Barre de recherche
-        search_layout = QHBoxLayout()
+        search_bar_layout = QHBoxLayout()
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Rechercher par nom ou tag (#tag)...")
+        self.search_input.setPlaceholderText("Rechercher par nom, tag (#tag), collection (@collection)...")
         self.search_input.returnPressed.connect(self.perform_search)
-        search_button = QPushButton("Rechercher")
-        search_button.clicked.connect(self.perform_search)
-        search_layout.addWidget(self.search_input)
-        search_layout.addWidget(search_button)
+        search_bar_layout.addWidget(self.search_input)
         
-        # Liste des résultats avec menu contextuel
+        self.search_button = QPushButton("Rechercher")
+        self.search_button.clicked.connect(self.perform_search)
+        search_bar_layout.addWidget(self.search_button)
+        
+        self.clear_search_button = QPushButton("Effacer")
+        self.clear_search_button.clicked.connect(self.clear_search)
+        search_bar_layout.addWidget(self.clear_search_button)
+        
+        search_layout.addLayout(search_bar_layout)
+        
+        # Liste des résultats
         self.results_list = QListWidget()
-        self.results_list.itemClicked.connect(self.display_object_details)
-        self.results_list.itemDoubleClicked.connect(self.open_object_location)
-        self.results_list.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.results_list.customContextMenuRequested.connect(self.show_context_menu)
+        self.results_list.itemSelectionChanged.connect(self.show_object_details)
+        self.results_list.itemDoubleClicked.connect(self.open_selected_object)
+        search_layout.addWidget(QLabel("Résultats:"))
+        search_layout.addWidget(self.results_list)
         
-        left_layout.addLayout(search_layout)
-        left_layout.addWidget(QLabel("Résultats:"))
-        left_layout.addWidget(self.results_list)
+        left_splitter.addWidget(search_panel)
         
-        # Panel central pour les détails et gestion des tags
-        center_panel = QWidget()
-        center_layout = QVBoxLayout(center_panel)
+        # Panel inférieur gauche - Détails de base
+        details_panel = QWidget()
+        details_layout = QVBoxLayout(details_panel)
         
-        # Détails de l'objet
-        details_group = QGroupBox("Détails de l'objet")
-        details_layout = QVBoxLayout()
+        # Informations de base
+        info_group = QGroupBox("Informations")
+        info_layout = QVBoxLayout(info_group)
         
         self.name_label = QLabel("Nom: ")
         self.type_label = QLabel("Type: ")
         self.location_label = QLabel("Emplacement: ")
         
-        # Bouton pour ouvrir l'emplacement
-        self.open_location_button = QPushButton("Ouvrir l'emplacement")
-        self.open_location_button.clicked.connect(self.open_current_object_location)
-        self.open_location_button.setEnabled(False)
+        info_layout.addWidget(self.name_label)
+        info_layout.addWidget(self.type_label)
+        info_layout.addWidget(self.location_label)
         
-        # Bouton pour modifier l'objet
-        self.edit_button = QPushButton("Modifier cet élément")
-        self.edit_button.clicked.connect(self.edit_current_object)
-        self.edit_button.setEnabled(False)
+        details_layout.addWidget(info_group)
         
-        self.description_view = QTextEdit()
-        self.description_view.setReadOnly(True)
+        # Boutons d'action
+        action_layout = QHBoxLayout()
+        self.open_button = QPushButton("Ouvrir")
+        self.open_button.clicked.connect(self.open_selected_object)
+        self.edit_button = QPushButton("Modifier")
+        self.edit_button.clicked.connect(self.edit_selected_object)
+        self.delete_button = QPushButton("Supprimer")
+        self.delete_button.clicked.connect(self.delete_selected_object)
         
-        details_layout.addWidget(self.name_label)
-        details_layout.addWidget(self.type_label)
-        details_layout.addWidget(self.location_label)
+        action_layout.addWidget(self.open_button)
+        action_layout.addWidget(self.edit_button)
+        action_layout.addWidget(self.delete_button)
+        details_layout.addLayout(action_layout)
         
-        button_details_layout = QHBoxLayout()
-        button_details_layout.addWidget(self.open_location_button)
-        button_details_layout.addWidget(self.edit_button)
-        details_layout.addLayout(button_details_layout)
+        left_splitter.addWidget(details_panel)
+        left_splitter.setSizes([400, 200])
         
-        details_layout.addWidget(QLabel("Description:"))
-        details_layout.addWidget(self.description_view)
-        details_group.setLayout(details_layout)
+        main_splitter.addWidget(left_splitter)
         
-        # Gestion des tags
-        tags_group = QGroupBox("Gestion des Tags")
-        tags_layout = QVBoxLayout()
+        # Panel droit - Détails avancés avec onglets
+        right_panel = QTabWidget()
+        
+        # Onglet Description
+        desc_tab = QWidget()
+        desc_layout = QVBoxLayout(desc_tab)
+        self.description_text = QTextEdit()
+        self.description_text.setReadOnly(True)
+        desc_layout.addWidget(QLabel("Description:"))
+        desc_layout.addWidget(self.description_text)
+        right_panel.addTab(desc_tab, "Description")
+        
+        # Onglet Tags
+        tags_tab = QWidget()
+        tags_layout = QVBoxLayout(tags_tab)
         
         tag_input_layout = QHBoxLayout()
         self.tag_input = QLineEdit()
         self.tag_input.setPlaceholderText("Ajouter un tag...")
         self.tag_input.returnPressed.connect(self.add_tag_to_object)
-        add_tag_button = QPushButton("Ajouter")
-        add_tag_button.clicked.connect(self.add_tag_to_object)
         tag_input_layout.addWidget(self.tag_input)
-        tag_input_layout.addWidget(add_tag_button)
         
-        self.tags_list = QListWidget()
+        self.add_tag_button = QPushButton("Ajouter")
+        self.add_tag_button.clicked.connect(self.add_tag_to_object)
+        tag_input_layout.addWidget(self.add_tag_button)
         
         tags_layout.addLayout(tag_input_layout)
-        tags_layout.addWidget(QLabel("Tags associés:"))
-        tags_layout.addWidget(self.tags_list)
-        tags_group.setLayout(tags_layout)
-        
-        # Boutons d'action
-        button_layout = QHBoxLayout()
-        add_file_button = QPushButton("Ajouter un fichier")
-        add_file_button.clicked.connect(self.add_new_file)
-        remove_tag_button = QPushButton("Retirer le tag sélectionné")
-        remove_tag_button.clicked.connect(self.remove_tag_from_object)
-        
-        button_layout.addWidget(add_file_button)
-        button_layout.addWidget(remove_tag_button)
-        
-        center_layout.addWidget(details_group)
-        center_layout.addWidget(tags_group)
-        center_layout.addLayout(button_layout)
-        
-        # Panel droit pour la prévisualisation
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        
-        # Widget de prévisualisation
-        self.preview_widget = PreviewWidget()
-        right_layout.addWidget(self.preview_widget)
-        
-        # Ajouter les panels au splitter
-        splitter.addWidget(left_panel)
-        splitter.addWidget(center_panel)
-        splitter.addWidget(right_panel)
-        splitter.setSizes([300, 500, 400])  # Ajuster les tailles des panels
-        
-        main_layout.addWidget(splitter)
-        
-        # Menu
-        self.create_menu()
-    
-    def toggle_dark_mode(self):
-        """Active/désactive le mode sombre"""
-        dark_mode = self.dark_mode_action.isChecked()
-        self.config.set_dark_mode(dark_mode)
-        self.apply_theme()
-    
-    def apply_theme(self):
-        """Applique le thème sombre ou clair selon la configuration"""
-        dark_mode = self.config.get_dark_mode()
-        
-        app = QApplication.instance()
-        palette = QPalette()
-        
-        if dark_mode:
-            # Palette pour le mode sombre
-            palette.setColor(QPalette.Window, QColor(53, 53, 53))
-            palette.setColor(QPalette.WindowText, Qt.white)
-            palette.setColor(QPalette.Base, QColor(35, 35, 35))
-            palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
-            palette.setColor(QPalette.ToolTipBase, QColor(25, 25, 25))
-            palette.setColor(QPalette.ToolTipText, Qt.white)
-            palette.setColor(QPalette.Text, Qt.white)
-            palette.setColor(QPalette.Button, QColor(53, 53, 53))
-            palette.setColor(QPalette.ButtonText, Qt.white)
-            palette.setColor(QPalette.BrightText, Qt.red)
-            palette.setColor(QPalette.Link, QColor(42, 130, 218))
-            palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
-            palette.setColor(QPalette.HighlightedText, Qt.black)
-            
-            # Styles supplémentaires pour les widgets spécifiques
-            self.setStyleSheet("""
-                QGroupBox {
-                    font-weight: bold;
-                    border: 1px solid #666;
-                    border-radius: 5px;
-                    margin-top: 1ex;
-                    padding-top: 10px;
-                    background-color: #353535;
-                    color: white;
-                }
-                
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    subcontrol-position: top center;
-                    padding: 0 5px;
-                }
-                
-                QListWidget {
-                    background-color: #353535;
-                    color: white;
-                    border: 1px solid #666;
-                    border-radius: 3px;
-                }
-                
-                QLineEdit {
-                    background-color: #353535;
-                    color: white;
-                    border: 1px solid #666;
-                    border-radius: 3px;
-                    padding: 5px;
-                }
-                
-                QTextEdit {
-                    background-color: #353535;
-                    color: white;
-                    border: 1px solid #666;
-                    border-radius: 3px;
-                }
-                
-                QComboBox {
-                    background-color: #353535;
-                    color: white;
-                    border: 1px solid #666;
-                    border-radius: 3px;
-                    padding: 5px;
-                }
-                
-                QComboBox QAbstractItemView {
-                    background-color: #353535;
-                    color: white;
-                    selection-background-color: #2a82da;
-                }
-                
-                QPushButton {
-                    background-color: #555;
-                    color: white;
-                    border: 1px solid #666;
-                    border-radius: 3px;
-                    padding: 5px 10px;
-                }
-                
-                QPushButton:hover {
-                    background-color: #666;
-                }
-                
-                QPushButton:pressed {
-                    background-color: #777;
-                }
-                
-                QPushButton:disabled {
-                    background-color: #333;
-                    color: #888;
-                }
-            """)
-        else:
-            # Palette par défaut (mode clair)
-            palette.setColor(QPalette.Window, QColor(240, 240, 240))
-            palette.setColor(QPalette.WindowText, Qt.black)
-            palette.setColor(QPalette.Base, Qt.white)
-            palette.setColor(QPalette.AlternateBase, QColor(240, 240, 240))
-            palette.setColor(QPalette.ToolTipBase, Qt.white)
-            palette.setColor(QPalette.ToolTipText, Qt.black)
-            palette.setColor(QPalette.Text, Qt.black)
-            palette.setColor(QPalette.Button, QColor(240, 240, 240))
-            palette.setColor(QPalette.ButtonText, Qt.black)
-            palette.setColor(QPalette.BrightText, Qt.red)
-            palette.setColor(QPalette.Link, QColor(0, 0, 255))
-            palette.setColor(QPalette.Highlight, QColor(0, 120, 215))
-            palette.setColor(QPalette.HighlightedText, Qt.white)
-            
-            # Réinitialiser le style
-            self.setStyleSheet("")
-        
-        app.setPalette(palette)
-
-    def init_ui(self):
-        self.setWindowTitle("Gestionnaire de Fichiers par Tags")
-        self.setGeometry(100, 100, 1400, 800)  # Augmenté la largeur pour accommoder la prévisualisation
-        
-        # Widget central et layout principal
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
-        
-        # Splitter pour diviser la fenêtre
-        splitter = QSplitter(Qt.Horizontal)
-        
-        # Panel gauche pour la liste des objets
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        
-        # Barre de recherche
-        search_layout = QHBoxLayout()
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Rechercher par nom ou tag (#tag)...")
-        self.search_input.returnPressed.connect(self.perform_search)
-        search_button = QPushButton("Rechercher")
-        search_button.clicked.connect(self.perform_search)
-        search_layout.addWidget(self.search_input)
-        search_layout.addWidget(search_button)
-        
-        # Liste des résultats avec menu contextuel
-        self.results_list = QListWidget()
-        self.results_list.itemClicked.connect(self.display_object_details)
-        self.results_list.itemDoubleClicked.connect(self.open_object_location)
-        self.results_list.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.results_list.customContextMenuRequested.connect(self.show_context_menu)
-        
-        left_layout.addLayout(search_layout)
-        left_layout.addWidget(QLabel("Résultats:"))
-        left_layout.addWidget(self.results_list)
-        
-        # Panel central pour les détails et gestion des tags
-        center_panel = QWidget()
-        center_layout = QVBoxLayout(center_panel)
-        
-        # Détails de l'objet
-        details_group = QGroupBox("Détails de l'objet")
-        details_layout = QVBoxLayout()
-        
-        self.name_label = QLabel("Nom: ")
-        self.type_label = QLabel("Type: ")
-        self.location_label = QLabel("Emplacement: ")
-        
-        # Bouton pour ouvrir l'emplacement
-        self.open_location_button = QPushButton("Ouvrir l'emplacement")
-        self.open_location_button.clicked.connect(self.open_current_object_location)
-        self.open_location_button.setEnabled(False)
-        
-        # Bouton pour modifier l'objet
-        self.edit_button = QPushButton("Modifier cet élément")
-        self.edit_button.clicked.connect(self.edit_current_object)
-        self.edit_button.setEnabled(False)
-        
-        self.description_view = QTextEdit()
-        self.description_view.setReadOnly(True)
-        
-        details_layout.addWidget(self.name_label)
-        details_layout.addWidget(self.type_label)
-        details_layout.addWidget(self.location_label)
-        
-        button_details_layout = QHBoxLayout()
-        button_details_layout.addWidget(self.open_location_button)
-        button_details_layout.addWidget(self.edit_button)
-        details_layout.addLayout(button_details_layout)
-        
-        details_layout.addWidget(QLabel("Description:"))
-        details_layout.addWidget(self.description_view)
-        details_group.setLayout(details_layout)
-        
-        # Gestion des tags
-        tags_group = QGroupBox("Gestion des Tags")
-        tags_layout = QVBoxLayout()
-        
-        tag_input_layout = QHBoxLayout()
-        self.tag_input = QLineEdit()
-        self.tag_input.setPlaceholderText("Ajouter un tag...")
-        self.tag_input.returnPressed.connect(self.add_tag_to_object)
-        add_tag_button = QPushButton("Ajouter")
-        add_tag_button.clicked.connect(self.add_tag_to_object)
-        tag_input_layout.addWidget(self.tag_input)
-        tag_input_layout.addWidget(add_tag_button)
         
         self.tags_list = QListWidget()
-        
-        tags_layout.addLayout(tag_input_layout)
+        self.tags_list.itemDoubleClicked.connect(self.remove_tag_from_object)
         tags_layout.addWidget(QLabel("Tags associés:"))
         tags_layout.addWidget(self.tags_list)
-        tags_group.setLayout(tags_layout)
         
-        # Boutons d'action
-        button_layout = QHBoxLayout()
-        add_file_button = QPushButton("Ajouter un fichier")
-        add_file_button.clicked.connect(self.add_new_file)
-        remove_tag_button = QPushButton("Retirer le tag sélectionné")
-        remove_tag_button.clicked.connect(self.remove_tag_from_object)
+        right_panel.addTab(tags_tab, "Tags")
         
-        button_layout.addWidget(add_file_button)
-        button_layout.addWidget(remove_tag_button)
+        # Onglet Collections
+        collections_tab = QWidget()
+        collections_layout = QVBoxLayout(collections_tab)
         
-        center_layout.addWidget(details_group)
-        center_layout.addWidget(tags_group)
-        center_layout.addLayout(button_layout)
+        collections_action_layout = QHBoxLayout()
+        self.manage_collections_button = QPushButton("Gérer les collections")
+        self.manage_collections_button.clicked.connect(self.manage_collections)
+        collections_action_layout.addWidget(self.manage_collections_button)
         
-        # Panel droit pour la prévisualisation
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
+        self.add_to_collection_button = QPushButton("Ajouter à une collection")
+        self.add_to_collection_button.clicked.connect(self.add_to_collection)
+        collections_action_layout.addWidget(self.add_to_collection_button)
         
-        # Widget de prévisualisation
+        collections_layout.addLayout(collections_action_layout)
+        
+        self.collections_list = QListWidget()
+        self.collections_list.itemDoubleClicked.connect(self.remove_from_collection)
+        collections_layout.addWidget(QLabel("Collections:"))
+        collections_layout.addWidget(self.collections_list)
+        
+        right_panel.addTab(collections_tab, "Collections")
+        
+        # Onglet Prévisualisation
+        preview_tab = QWidget()
+        preview_layout = QVBoxLayout(preview_tab)
         self.preview_widget = PreviewWidget()
-        right_layout.addWidget(self.preview_widget)
+        preview_layout.addWidget(self.preview_widget)
+        right_panel.addTab(preview_tab, "Prévisualisation")
         
-        # Ajouter les panels au splitter
-        splitter.addWidget(left_panel)
-        splitter.addWidget(center_panel)
-        splitter.addWidget(right_panel)
-        splitter.setSizes([300, 500, 400])  # Ajuster les tailles des panels
+        main_splitter.addWidget(right_panel)
+        main_splitter.setSizes([600, 800])
         
-        main_layout.addWidget(splitter)
+        main_layout.addWidget(main_splitter)
         
-        # Menu
-        self.create_menu()
+        # Barre de menu
+        self.create_menu_bar()
+        
+        # Barre d'état
+        self.statusBar().showMessage("Prêt")
+        
+        # Contexte menus
+        self.setup_context_menus()
+        
+        # Auto-complétion
+        self.setup_autocompletion()
     
-    def create_menu(self):
+    def create_menu_bar(self):
+        """Crée la barre de menu"""
         menu_bar = self.menuBar()
         
         # Menu Fichier
         file_menu = menu_bar.addMenu("Fichier")
         
-        add_file_action = file_menu.addAction("Ajouter un fichier")
-        add_file_action.triggered.connect(self.add_new_file)
-
-        # Ajouter l'action d'import de dossier
-        import_folder_action = file_menu.addAction("Importer un dossier...")
-        import_folder_action.triggered.connect(self.import_folder)
+        add_file_action = QAction("Ajouter un fichier", self)
+        add_file_action.triggered.connect(self.add_file)
+        file_menu.addAction(add_file_action)
         
-        open_db_action = file_menu.addAction("Ouvrir un autre dossier...")
-        open_db_action.triggered.connect(self.open_database)
+        bulk_import_action = QAction("Import multiple", self)
+        bulk_import_action.triggered.connect(self.bulk_import)
+        file_menu.addAction(bulk_import_action)
         
         file_menu.addSeparator()
         
-        exit_action = file_menu.addAction("Quitter")
+        settings_action = QAction("Paramètres", self)
+        settings_action.triggered.connect(self.show_settings)
+        file_menu.addAction(settings_action)
+        
+        file_menu.addSeparator()
+        
+        exit_action = QAction("Quitter", self)
         exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
         
-        # Menu Édition
-        edit_menu = menu_bar.addMenu("Édition")
-        
-        edit_action = edit_menu.addAction("Modifier l'élément sélectionné")
-        edit_action.triggered.connect(self.edit_current_object)
-        
-        delete_action = edit_menu.addAction("Supprimer l'élément sélectionné")
-        delete_action.triggered.connect(self.delete_current_object)
-        
-        # Menu Recherche
-        search_menu = menu_bar.addMenu("Recherche")
-        
-        history_action = search_menu.addAction("Historique des recherches")
-        history_action.triggered.connect(self.show_search_history)
-        
-        clear_history_action = search_menu.addAction("Effacer l'historique")
-        clear_history_action.triggered.connect(self.clear_search_history)
-        
-        search_menu.addSeparator()
-        syntax_help_action = search_menu.addAction("Aide syntaxe recherche")
-        syntax_help_action.triggered.connect(self.show_search_help)
-        
-
-        # Menu Tags
-        tags_menu = menu_bar.addMenu("Tags")
-        
-        view_tags_action = tags_menu.addAction("Voir tous les tags")
-        view_tags_action.triggered.connect(self.show_tags_list)
-
         # Menu Affichage
         view_menu = menu_bar.addMenu("Affichage")
         
-        self.dark_mode_action = QAction("Mode sombre", self)
-        self.dark_mode_action.setCheckable(True)
-        self.dark_mode_action.setChecked(self.config.get_dark_mode())
-        self.dark_mode_action.triggered.connect(self.toggle_dark_mode)
-        view_menu.addAction(self.dark_mode_action)
+        dark_mode_action = QAction("Mode sombre", self)
+        dark_mode_action.setCheckable(True)
+        dark_mode_action.setChecked(self.config.get_dark_mode())
+        dark_mode_action.triggered.connect(self.toggle_dark_mode)
+        view_menu.addAction(dark_mode_action)
         
         # Menu Aide
         help_menu = menu_bar.addMenu("Aide")
         
-        about_action = help_menu.addAction("À propos")
+        about_action = QAction("À propos", self)
         about_action.triggered.connect(self.show_about)
-    
-    def show_search_help(self):
-        """Affiche l'aide sur la syntaxe de recherche"""
-        dialog = SearchHelpDialog(self)
-        dialog.exec_()
+        help_menu.addAction(about_action)
 
-    def show_tags_list(self):
-        """Affiche une boîte de dialogue avec la liste de tous les tags et leur nombre d'objets"""
-        if not self.db:
-            QMessageBox.warning(self, "Erreur", "Aucune base de données n'est ouverte.")
-            return
+    def setup_autocompletion(self):
+        """Configure l'auto-complétion pour la recherche"""
+        # Create a QStringListModel for the completer
+        self.completion_model = QStringListModel()
         
-        # Créer une boîte de dialogue
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Liste des Tags")
-        dialog.setModal(True)
-        dialog.setMinimumSize(400, 300)
+        self.completer = QCompleter()
+        self.completer.setModel(self.completion_model)  # Set the model
+        self.completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.completer.setCompletionMode(QCompleter.PopupCompletion)
+        self.search_input.setCompleter(self.completer)
         
-        layout = QVBoxLayout(dialog)
-        
-        # Label d'information
-        info_label = QLabel(f"Tags disponibles ({len(self.db.tags)}):")
-        layout.addWidget(info_label)
-        
-        # Liste des tags
-        tags_list = QListWidget()
-        
-        # Trier les tags par ordre alphabétique
-        sorted_tags = sorted(self.db.tags.items(), key=lambda x: x[0].lower())
-        
-        for tag, obj_ids in sorted_tags:
-            count = len(obj_ids)
-            item = QListWidgetItem(f"#{tag} ({count} objet{'s' if count != 1 else ''})")
-            item.setData(Qt.UserRole, tag)  # Stocker le tag pour référence
-            tags_list.addItem(item)
-        
-        layout.addWidget(tags_list)
-        
-        # Boutons
-        button_layout = QHBoxLayout()
-        
-        search_button = QPushButton("Rechercher ce tag")
-        search_button.clicked.connect(lambda: self.search_by_tag_from_list(tags_list.currentItem(), dialog))
-        
-        close_button = QPushButton("Fermer")
-        close_button.clicked.connect(dialog.accept)
-        
-        button_layout.addWidget(search_button)
-        button_layout.addWidget(close_button)
-        layout.addLayout(button_layout)
-        
-        # Connecter le double-clic pour rechercher par tag
-        tags_list.itemDoubleClicked.connect(lambda item: self.search_by_tag_from_list(item, dialog))
-        
-        dialog.exec_()
+        # Mettre à jour les suggestions quand le texte change
+        self.search_input.textChanged.connect(self.update_completion)
     
-    def search_by_tag_from_list(self, item, dialog=None):
-        """Effectue une recherche basée sur le tag sélectionné dans la liste"""
-        if not item:
-            return
-        
-        tag = item.data(Qt.UserRole)
-        if tag:
-            self.search_input.setText(f"#{tag}")
-            self.perform_search()
-            # Fermer la boîte de dialogue si elle est fournie
-            if dialog:
-                dialog.accept()
-
-    def show_context_menu(self, position):
-        """Affiche le menu contextuel pour la liste des résultats"""
+    def update_completion(self, text):
+        """Met à jour les suggestions d'auto-complétion"""
         if not self.db:
             return
-            
+        
+        suggestions = []
+        
+        # Ajouter les tags
+        suggestions.extend([f"#{tag}" for tag in self.db.tags.keys()])
+        
+        # Ajouter les collections
+        suggestions.extend([f"@{collection.name}" for collection in self.db.collections.values()])
+        
+        # Ajouter les opérateurs booléens
+        suggestions.extend([" AND ", " OR ", " NOT "])
+        
+        # Filtrer les suggestions selon le texte actuel
+        current_text = text.lower()
+        filtered_suggestions = [s for s in suggestions if current_text in s.lower()]
+        
+        # Mettre à jour le completer
+        self.completer.model().setStringList(filtered_suggestions)
+    
+    def setup_context_menus(self):
+        """Configure les menus contextuels"""
+        self.results_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.results_list.customContextMenuRequested.connect(self.show_results_context_menu)
+        
+        self.tags_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tags_list.customContextMenuRequested.connect(self.show_tags_context_menu)
+        
+        self.collections_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.collections_list.customContextMenuRequested.connect(self.show_collections_context_menu)
+
+    def show_results_context_menu(self, position):
+        """Affiche le menu contextuel pour les résultats"""
         item = self.results_list.itemAt(position)
         if not item:
             return
-            
+        
         menu = QMenu()
         
-        edit_action = menu.addAction("Modifier")
-        edit_action.triggered.connect(lambda: self.edit_object(item))
+        open_action = QAction("Ouvrir", self)
+        open_action.triggered.connect(self.open_selected_object)
+        menu.addAction(open_action)
         
-        delete_action = menu.addAction("Supprimer")
-        delete_action.triggered.connect(lambda: self.delete_object(item))
+        edit_action = QAction("Modifier", self)
+        edit_action.triggered.connect(self.edit_selected_object)
+        menu.addAction(edit_action)
+        
+        delete_action = QAction("Supprimer", self)
+        delete_action.triggered.connect(self.delete_selected_object)
+        menu.addAction(delete_action)
+        
+        menu.addSeparator()
+        
+        copy_name_action = QAction("Copier le nom", self)
+        copy_name_action.triggered.connect(lambda: self.copy_to_clipboard("name"))
+        menu.addAction(copy_name_action)
+        
+        copy_location_action = QAction("Copier l'emplacement", self)
+        copy_location_action.triggered.connect(lambda: self.copy_to_clipboard("location"))
+        menu.addAction(copy_location_action)
         
         menu.exec_(self.results_list.mapToGlobal(position))
     
+    def show_tags_context_menu(self, position):
+        """Affiche le menu contextuel pour les tags"""
+        item = self.tags_list.itemAt(position)
+        if not item:
+            return
+        
+        menu = QMenu()
+        
+        remove_action = QAction("Retirer le tag", self)
+        remove_action.triggered.connect(self.remove_tag_from_object)
+        menu.addAction(remove_action)
+        
+        search_action = QAction("Rechercher ce tag", self)
+        search_action.triggered.connect(lambda: self.search_tag(item.text()))
+        menu.addAction(search_action)
+        
+        menu.exec_(self.tags_list.mapToGlobal(position))
+    
+    def show_collections_context_menu(self, position):
+        """Affiche le menu contextuel pour les collections"""
+        item = self.collections_list.itemAt(position)
+        if not item:
+            return
+        
+        menu = QMenu()
+        
+        remove_action = QAction("Retirer de la collection", self)
+        remove_action.triggered.connect(self.remove_from_collection)
+        menu.addAction(remove_action)
+        
+        view_action = QAction("Voir les objets de la collection", self)
+        view_action.triggered.connect(self.view_collection)
+        menu.addAction(view_action)
+        
+        menu.exec_(self.collections_list.mapToGlobal(position))
+    
+    def copy_to_clipboard(self, what):
+        """Copie les informations de l'objet dans le presse-papier"""
+        current_item = self.results_list.currentItem()
+        if not current_item:
+            return
+        
+        obj_id = current_item.data(Qt.UserRole)
+        obj = self.db.objects.get(obj_id)
+        if not obj:
+            return
+        
+        clipboard = QApplication.clipboard()
+        if what == "name":
+            clipboard.setText(obj.name)
+        elif what == "location":
+            clipboard.setText(obj.location)
+    
+    def search_tag(self, tag):
+        """Recherche les objets avec un tag spécifique"""
+        self.search_input.setText(f"#{tag}")
+        self.perform_search()
+    
+    def view_collection(self):
+        """Affiche les objets d'une collection"""
+        item = self.collections_list.currentItem()
+        if not item:
+            return
+        
+        collection_name = item.text()
+        self.search_input.setText(f"@{collection_name}")
+        self.perform_search()
+    
     def load_database(self):
         """Charge la base de données"""
-        # Vérifier si c'est le premier démarrage
-        if self.config.is_first_run():
-            self.show_first_run_dialog()
-        else:
-            data_dir = self.config.get_data_dir()
-            self.setup_database(data_dir)
-    
-    def show_first_run_dialog(self):
-        """Affiche la boîte de dialogue de premier démarrage"""
-        dialog = FirstRunDialog(self)
-        if dialog.exec() == QDialog.Accepted:
-            data_dir = dialog.get_data_dir()
-            self.config.set_data_dir(data_dir)
-            self.config.set_first_run_complete()
-            self.setup_database(data_dir)
-        else:
-            # Si l'utilisateur annule, on quitte l'application
-            QApplication.quit()
-    
-    def setup_database(self, data_dir):
-        """Configure la base de données avec le dossier spécifié"""
         try:
+            data_dir = self.config.get_data_dir()
             self.db = TagDatabase(data_dir)
-            self.load_all_objects()
-            self.setWindowTitle(f"Gestionnaire de Fichiers par Tags - {data_dir}")
-        except Exception as e:
-            QMessageBox.critical(self, "Erreur", f"Impossible de charger la base de données: {e}")
-    
-    def open_database(self):
-        """Ouvre un autre dossier de base de données"""
-        folder = QFileDialog.getExistingDirectory(self, "Sélectionner le dossier de données")
-        if folder:
-            self.config.set_data_dir(folder)
-            self.setup_database(folder)
-    
-    def load_all_objects(self):
-        """Charge tous les objets dans la liste"""
-        if not self.db:
-            return
+            self.statusBar().showMessage(f"Base de données chargée: {len(self.db.objects)} objets, {len(self.db.tags)} tags, {len(self.db.collections)} collections")
             
-        self.results_list.clear()
-        for obj in self.db.objects.values():
-            item = QListWidgetItem(f"{obj.name} ({obj.file_type})")
-            item.setData(Qt.UserRole, obj.id)
-            self.results_list.addItem(item)
+            # Charger l'historique des recherches
+            history_file = self.config.get_history_file()
+            self.search_history.load_from_file(history_file)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Erreur lors du chargement de la base de données: {e}")
+    
+    def apply_theme(self):
+        """Applique le thème sombre ou clair"""
+        if self.config.get_dark_mode():
+            self.apply_dark_theme()
+        else:
+            self.apply_light_theme()
+    
+    def apply_dark_theme(self):
+        """Applique le thème sombre"""
+        dark_palette = QPalette()
+        dark_palette.setColor(QPalette.Window, QColor(53, 53, 53))
+        dark_palette.setColor(QPalette.WindowText, Qt.white)
+        dark_palette.setColor(QPalette.Base, QColor(25, 25, 25))
+        dark_palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
+        dark_palette.setColor(QPalette.ToolTipBase, Qt.white)
+        dark_palette.setColor(QPalette.ToolTipText, Qt.white)
+        dark_palette.setColor(QPalette.Text, Qt.white)
+        dark_palette.setColor(QPalette.Button, QColor(53, 53, 53))
+        dark_palette.setColor(QPalette.ButtonText, Qt.white)
+        dark_palette.setColor(QPalette.BrightText, Qt.red)
+        dark_palette.setColor(QPalette.Link, QColor(42, 130, 218))
+        dark_palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+        dark_palette.setColor(QPalette.HighlightedText, Qt.black)
         
-        # Effacer la prévisualisation et désactiver les boutons
-        self.preview_widget.clear_preview()
-        self.open_location_button.setEnabled(False)
-        self.edit_button.setEnabled(False)
-        self.current_object = None
+        QApplication.setPalette(dark_palette)
+    
+    def apply_light_theme(self):
+        """Applique le thème clair"""
+        QApplication.setPalette(QApplication.style().standardPalette())
+    
+    def toggle_dark_mode(self):
+        """Bascule entre le mode sombre et le mode clair"""
+        current = self.config.get_dark_mode()
+        self.config.set_dark_mode(not current)
+        self.apply_theme()
     
     def perform_search(self):
-        """Effectue une recherche en fonction du texte saisi"""
-        if not self.db:
-            QMessageBox.warning(self, "Erreur", "Aucune base de données n'est ouverte.")
-            return
-            
+        """Effectue une recherche"""
         query = self.search_input.text().strip()
         if not query:
-            self.load_all_objects()
+            self.clear_search()
             return
-        
-        # Sauvegarder le texte de recherche avant d'ajouter à l'historique
-        search_text = query
         
         # Ajouter à l'historique
         self.search_history.add_search(query)
-        self.update_search_suggestions()
-        self.save_search_history()
         
-        # Utiliser la recherche avancée pour toutes les requêtes
+        # Sauvegarder l'historique
+        history_file = self.config.get_history_file()
+        self.search_history.save_to_file(history_file)
+        
+        # Effectuer la recherche
         results = self.db.advanced_search(query)
+        self.current_search_results = results
         
         # Afficher les résultats
-        self.display_search_results(results, query)
-        
-        # REMETTRE le texte de recherche dans la barre après la recherche
-        self.search_input.setText(search_text)
-        # Positionner le curseur à la fin du texte
-        self.search_input.setCursorPosition(len(search_text))
-
-    def display_search_results(self, results: List[FileObject], query: str = ""):
-        """Affiche les résultats de recherche"""
         self.results_list.clear()
-        
         for obj in results:
             item = QListWidgetItem(f"{obj.name} ({obj.file_type})")
             item.setData(Qt.UserRole, obj.id)
             self.results_list.addItem(item)
         
-        # Afficher le nombre de résultats et la requête
-        if results:
-            count_text = f"--- {len(results)} résultat(s)"
-            if query:
-                count_text += f" pour: {query}"
-            count_text += " ---"
-            
-            count_item = QListWidgetItem(count_text)
-            count_item.setFlags(Qt.NoItemFlags)
-            count_item.setForeground(Qt.darkGray)
-            self.results_list.addItem(count_item)
+        # Mettre à jour la barre d'état
+        self.statusBar().showMessage(f"{len(results)} résultat(s) trouvé(s) pour: {query}")
         
-        # Effacer la prévisualisation si aucun résultat
-        if not results:
-            self.preview_widget.clear_preview()
-            self.open_location_button.setEnabled(False)
-            self.edit_button.setEnabled(False)
-            
-            if query:
-                QMessageBox.information(self, "Recherche", 
-                                      f"Aucun résultat trouvé pour: {query}")
-
+        # Effacer les détails
+        self.clear_object_details()
     
-
-    def show_search_history(self):
-        """Affiche la boîte de dialogue d'historique des recherches"""
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Historique des recherches")
-        dialog.setModal(True)
-        dialog.setMinimumSize(500, 400)
+    def clear_search(self):
+        """Efface la recherche et affiche tous les objets"""
+        self.search_input.clear()
+        self.current_search_results = list(self.db.objects.values())
+        self.results_list.clear()
+        for obj in self.current_search_results:
+            item = QListWidgetItem(f"{obj.name} ({obj.file_type})")
+            item.setData(Qt.UserRole, obj.id)
+            self.results_list.addItem(item)
         
-        layout = QVBoxLayout(dialog)
-        
-        # Liste de l'historique
-        history_list = QListWidget()
-        
-        for timestamp, query in self.search_history.history:
-            item = QListWidgetItem(f"{timestamp} - {query}")
-            item.setData(Qt.UserRole, query)
-            history_list.addItem(item)
-        
-        layout.addWidget(QLabel("Historique des recherches récentes:"))
-        layout.addWidget(history_list)
-        
-        # Boutons
-        button_layout = QHBoxLayout()
-        
-        search_button = QPushButton("Rechercher à nouveau")
-        search_button.clicked.connect(lambda: self.reuse_search_query(history_list.currentItem(), dialog))
-        
-        clear_button = QPushButton("Effacer l'historique")
-        clear_button.clicked.connect(lambda: self.clear_search_history(dialog))
-        
-        close_button = QPushButton("Fermer")
-        close_button.clicked.connect(dialog.accept)
-        
-        button_layout.addWidget(search_button)
-        button_layout.addWidget(clear_button)
-        button_layout.addWidget(close_button)
-        
-        layout.addLayout(button_layout)
-        
-        # Connecter le double-clic pour réutiliser la recherche
-        history_list.itemDoubleClicked.connect(lambda item: self.reuse_search_query(item, dialog))
-        
-        dialog.exec_()
-
-    def reuse_search_query(self, item, dialog=None):
-        """Réutilise une recherche de l'historique"""
-        if not item:
-            return
-        
-        query = item.data(Qt.UserRole)
-        if query:
-            self.search_input.setText(query)
-            self.perform_search()
-            if dialog:
-                dialog.accept()
+        self.statusBar().showMessage(f"Affichage de tous les objets: {len(self.current_search_results)}")
+        self.clear_object_details()
     
-    def clear_search_history(self, dialog=None):
-        """Efface tout l'historique des recherches"""
-        reply = QMessageBox.question(
-            self,
-            "Confirmation",
-            "Êtes-vous sûr de vouloir effacer tout l'historique des recherches ?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            self.search_history.clear_history()
-            self.update_search_suggestions()
-            self.save_search_history()
-            
-            if dialog:
-                dialog.accept()
-            
-            QMessageBox.information(self, "Succès", "Historique des recherches effacé.")
-
-    def display_object_details(self, item):
+    def show_object_details(self):
         """Affiche les détails de l'objet sélectionné"""
-        if not self.db:
+        current_item = self.results_list.currentItem()
+        if not current_item:
+            self.clear_object_details()
             return
-            
-        obj_id = item.data(Qt.UserRole)
-        self.current_object = self.db.objects.get(obj_id)
         
-        if self.current_object:
-            self.name_label.setText(f"Nom: {self.current_object.name}")
-            self.type_label.setText(f"Type: {self.current_object.file_type}")
-            
-            # Afficher l'emplacement avec un style différent selon le type
-            location_text = f"Emplacement: {self.current_object.location}"
-            if self.current_object.is_external():
-                location_text += " 🌐"  # Icône pour les URLs web
-            else:
-                location_text += " 💾"  # Icône pour les fichiers locaux
-            
-            self.location_label.setText(location_text)
-            self.description_view.setText(self.current_object.description)
-            
-            # Activer les boutons
-            self.open_location_button.setEnabled(True)
-            self.edit_button.setEnabled(True)
-            
-            # Charger les tags associés
-            self.tags_list.clear()
-            tags = self.db.get_object_tags(obj_id)
-            for tag in tags:
-                self.tags_list.addItem(f"#{tag}")
-            
-            # Afficher la prévisualisation
-            self.preview_widget.set_preview(self.current_object)
-        else:
-            # Effacer la prévisualisation si l'objet n'est pas trouvé
-            self.preview_widget.clear_preview()
-            self.open_location_button.setEnabled(False)
-            self.edit_button.setEnabled(False)
-
-    def open_current_object_location(self):
-        """Ouvre l'emplacement de l'objet courant"""
-        if self.current_object:
-            success = self.current_object.open_location()
-            if not success:
-                QMessageBox.warning(self, "Erreur", "Impossible d'ouvrir l'emplacement. Le fichier n'existe pas ou l'URL est invalide.")
-    
-    def open_object_location(self, item):
-        """Ouvre l'emplacement de l'objet double-cliqué"""
-        if not self.db:
-            return
-            
-        obj_id = item.data(Qt.UserRole)
+        obj_id = current_item.data(Qt.UserRole)
         obj = self.db.objects.get(obj_id)
-        if obj:
-            success = obj.open_location()
-            if not success:
-                QMessageBox.warning(self, "Erreur", "Impossible d'ouvrir l'emplacement. Le fichier n'existe pas ou l'URL est invalide.")
+        if not obj:
+            self.clear_object_details()
+            return
+        
+        # Afficher les informations de base
+        self.name_label.setText(f"Nom: {obj.name}")
+        self.type_label.setText(f"Type: {obj.file_type}")
+        location_text = f"Emplacement: {obj.location}"
+        if obj.is_external():
+            location_text += " 🌐"
+        else:
+            location_text += " 💾"
+        self.location_label.setText(location_text)
+        
+        # Afficher la description
+        self.description_text.setPlainText(obj.description)
+        
+        # Afficher les tags
+        self.tags_list.clear()
+        tags = self.db.get_object_tags(obj_id)
+        for tag in tags:
+            self.tags_list.addItem(tag)
+        
+        # Afficher les collections
+        self.collections_list.clear()
+        collections = self.db.get_collections_for_object(obj_id)
+        for collection in collections:
+            self.collections_list.addItem(collection.name)
+        
+        # Afficher la prévisualisation
+        self.preview_widget.set_preview(obj)
+    
+    def clear_object_details(self):
+        """Efface les détails de l'objet"""
+        self.name_label.setText("Nom: ")
+        self.type_label.setText("Type: ")
+        self.location_label.setText("Emplacement: ")
+        self.description_text.clear()
+        self.tags_list.clear()
+        self.collections_list.clear()
+        self.preview_widget.clear_preview()  # Effacer la prévisualisation
     
     def add_tag_to_object(self):
-        """Ajoute un tag à l'objet courant"""
-        if not self.db:
-            QMessageBox.warning(self, "Erreur", "Aucune base de données n'est ouverte.")
-            return
-            
-        if not self.current_object:
+        """Ajoute un tag à l'objet sélectionné"""
+        current_item = self.results_list.currentItem()
+        if not current_item:
             QMessageBox.warning(self, "Erreur", "Aucun objet sélectionné.")
             return
         
         tag = self.tag_input.text().strip()
         if not tag:
+            QMessageBox.warning(self, "Erreur", "Veuillez entrer un tag.")
             return
         
-        self.db.add_tag(self.current_object.id, tag)
-        self.display_object_details(self.results_list.currentItem())
+        obj_id = current_item.data(Qt.UserRole)
+        self.db.add_tag(obj_id, tag)
+        self.show_object_details()  # Rafraîchir l'affichage
         self.tag_input.clear()
+        
+        # Mettre à jour l'auto-complétion
+        self.update_completion(self.search_input.text())
     
     def remove_tag_from_object(self):
-        """Retire le tag sélectionné de l'objet courant"""
-        if not self.db:
-            QMessageBox.warning(self, "Erreur", "Aucune base de données n'est ouverte.")
-            return
-            
-        if not self.current_object:
-            QMessageBox.warning(self, "Erreur", "Aucun objet sélectionné.")
+        """Retire un tag de l'objet sélectionné"""
+        current_item = self.tags_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Erreur", "Aucun tag sélectionné.")
             return
         
-        current_tag_item = self.tags_list.currentItem()
-        if not current_tag_item:
+        obj_item = self.results_list.currentItem()
+        if not obj_item:
             return
         
-        tag = current_tag_item.text().lstrip('#')
-        self.db.remove_tag(self.current_object.id, tag)
-        self.display_object_details(self.results_list.currentItem())
-    
-    def add_new_file(self):
-        """Ouvre une boîte de dialogue pour ajouter un nouveau fichier"""
-        if not self.db:
-            QMessageBox.warning(self, "Erreur", "Aucune base de données n'est ouverte.")
-            return
-            
-        dialog = FileDialog(self)
+        tag = current_item.text()
+        obj_id = obj_item.data(Qt.UserRole)
         
-        if dialog.exec() == QDialog.Accepted:
-            data = dialog.get_data()
-            
-            # Validation de l'emplacement
-            location = data["location"].strip()
-            location_type = dialog.location_type_combo.currentText()
-            
-            if location_type == "Interne (fichier local)" and not os.path.exists(location):
-                QMessageBox.warning(self, "Erreur", "Le fichier spécifié n'existe pas.")
-                return
-            
-            if location_type == "Externe (URL web)" and not location.startswith(('http://', 'https://')):
-                QMessageBox.warning(self, "Erreur", "L'URL doit commencer par http:// ou https://")
-                return
-            
-            # Vérifier si l'emplacement existe déjà
-            if self.db.location_exists(location):
-                existing_obj = self.db.get_object_by_location(location)
-                QMessageBox.warning(
-                    self, 
-                    "Fichier déjà existant", 
-                    f"Cet emplacement existe déjà dans la base de données:\n\n"
-                    f"Nom: {existing_obj.name}\n"
-                    f"Type: {existing_obj.file_type}\n\n"
-                    f"Vous ne pouvez pas ajouter le même fichier deux fois."
-                )
-                return
-            
-            # Créer le nouvel objet
-            new_obj = FileObject(
-                data["name"],
-                data["description"],
-                data["type"],
-                location
-            )
-            
-            # Ajouter à la base de données
-            obj_id = self.db.add_object(new_obj)
-            
-            if obj_id is None:
-                QMessageBox.warning(self, "Erreur", "Impossible d'ajouter le fichier (doublon).")
-                return
-            
-            # Mettre à jour l'interface
-            self.load_all_objects()
-            
-            QMessageBox.information(self, "Succès", "Fichier ajouté avec succès.")
-    
-    def edit_current_object(self):
-        """Modifie l'objet courant"""
-        if not self.current_object:
-            QMessageBox.warning(self, "Erreur", "Aucun objet sélectionné.")
-            return
-            
-        self.edit_object_by_id(self.current_object.id)
-    
-    def edit_object(self, item):
-        """Modifie l'objet sélectionné dans la liste"""
-        if not item:
-            return
-            
-        obj_id = item.data(Qt.UserRole)
-        self.edit_object_by_id(obj_id)
-    
-    def edit_object_by_id(self, obj_id):
-        """Modifie un objet par son ID en vérifiant les doublons"""
-        if not self.db:
-            QMessageBox.warning(self, "Erreur", "Aucune base de données n'est ouverte.")
-            return
-            
-        obj = self.db.objects.get(obj_id)
-        if not obj:
-            QMessageBox.warning(self, "Erreur", "Objet introuvable.")
-            return
-        
-        dialog = FileDialog(self, obj)
-        
-        if dialog.exec() == QDialog.Accepted:
-            data = dialog.get_data()
-            
-            # Validation de l'emplacement
-            location = data["location"].strip()
-            location_type = dialog.location_type_combo.currentText()
-            
-            if location_type == "Interne (fichier local)" and not os.path.exists(location):
-                QMessageBox.warning(self, "Erreur", "Le fichier spécifié n'existe pas.")
-                return
-            
-            if location_type == "Externe (URL web)" and not location.startswith(('http://', 'https://')):
-                QMessageBox.warning(self, "Erreur", "L'URL doit commencer par http:// ou https://")
-                return
-            
-            # Vérifier si le nouvel emplacement existe déjà pour un autre objet
-            if location != obj.location:  # Seulement si l'emplacement change
-                if self.db.location_exists(location):
-                    existing_obj = self.db.get_object_by_location(location)
-                    QMessageBox.warning(
-                        self, 
-                        "Emplacement déjà existant", 
-                        f"Cet emplacement existe déjà pour un autre objet:\n\n"
-                        f"Nom: {existing_obj.name}\n"
-                        f"Type: {existing_obj.file_type}\n\n"
-                        f"Vous ne pouvez pas utiliser le même emplacement pour deux objets différents."
-                    )
-                    return
-            
-            # Mettre à jour l'objet
-            success = self.db.update_object(
-                obj_id,
-                data["name"],
-                data["description"],
-                data["type"],
-                location
-            )
-            
-            if success:
-                # Mettre à jour l'interface
-                self.load_all_objects()
-                QMessageBox.information(self, "Succès", "Fichier modifié avec succès.")
-            else:
-                QMessageBox.warning(self, "Erreur", "Impossible de modifier le fichier (doublon détecté).")
-    
-    def delete_current_object(self):
-        """Supprime l'objet courant"""
-        if not self.current_object:
-            QMessageBox.warning(self, "Erreur", "Aucun objet sélectionné.")
-            return
-            
         reply = QMessageBox.question(
             self,
             "Confirmation",
-            f"Êtes-vous sûr de vouloir supprimer '{self.current_object.name}' ?\nCette action est irréversible.",
+            f"Êtes-vous sûr de vouloir retirer le tag '{tag}' ?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
         
         if reply == QMessageBox.Yes:
-            success = self.db.delete_object(self.current_object.id)
-            if success:
-                self.load_all_objects()
-                QMessageBox.information(self, "Succès", "Fichier supprimé avec succès.")
-            else:
-                QMessageBox.warning(self, "Erreur", "Impossible de supprimer le fichier.")
+            self.db.remove_tag(obj_id, tag)
+            self.show_object_details()  # Rafraîchir l'affichage
     
-    def delete_object(self, item):
-        """Supprime l'objet sélectionné dans la liste"""
-        if not item:
+    def add_to_collection(self):
+        """Ajoute l'objet sélectionné à une collection"""
+        current_item = self.results_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Erreur", "Aucun objet sélectionné.")
             return
-            
-        obj_id = item.data(Qt.UserRole)
-        obj = self.db.objects.get(obj_id)
         
-        if not obj:
+        obj_id = current_item.data(Qt.UserRole)
+        
+        # Demander à l'utilisateur de choisir une collection
+        collections = list(self.db.collections.values())
+        if not collections:
+            QMessageBox.information(self, "Information", "Aucune collection disponible. Veuillez d'abord créer une collection.")
+            self.manage_collections()
             return
-            
+        
+        collection_names = [collection.name for collection in collections]
+        collection_name, ok = QInputDialog.getItem(
+            self,
+            "Ajouter à une collection",
+            "Choisissez une collection:",
+            collection_names,
+            0,
+            False
+        )
+        
+        if ok and collection_name:
+            # Trouver la collection correspondante
+            for collection in collections:
+                if collection.name == collection_name:
+                    success = self.db.add_object_to_collection(obj_id, collection.id)
+                    if success:
+                        QMessageBox.information(self, "Succès", f"Objet ajouté à la collection '{collection_name}'.")
+                        self.show_object_details()  # Rafraîchir l'affichage
+                    else:
+                        QMessageBox.warning(self, "Erreur", "Impossible d'ajouter l'objet à la collection.")
+                    break
+    
+    def remove_from_collection(self):
+        """Retire l'objet sélectionné d'une collection"""
+        current_collection_item = self.collections_list.currentItem()
+        if not current_collection_item:
+            QMessageBox.warning(self, "Erreur", "Aucune collection sélectionnée.")
+            return
+        
+        current_obj_item = self.results_list.currentItem()
+        if not current_obj_item:
+            return
+        
+        collection_name = current_collection_item.text()
+        obj_id = current_obj_item.data(Qt.UserRole)
+        
+        # Trouver la collection correspondante
+        collection = None
+        for col in self.db.collections.values():
+            if col.name == collection_name:
+                collection = col
+                break
+        
+        if not collection:
+            return
+        
+        reply = QMessageBox.question(
+            self,
+            "Confirmation",
+            f"Êtes-vous sûr de vouloir retirer cet objet de la collection '{collection_name}' ?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            success = self.db.remove_object_from_collection(obj_id, collection.id)
+            if success:
+                QMessageBox.information(self, "Succès", f"Objet retiré de la collection '{collection_name}'.")
+                self.show_object_details()  # Rafraîchir l'affichage
+            else:
+                QMessageBox.warning(self, "Erreur", "Impossible de retirer l'objet de la collection.")
+    
+    def manage_collections(self):
+        """Ouvre la boîte de dialogue de gestion des collections"""
+        dialog = CollectionsDialog(self, self.db)
+        dialog.exec_()
+        # Rafraîchir l'affichage après la gestion des collections
+        self.show_object_details()
+        self.update_completion(self.search_input.text())
+    
+    def open_selected_object(self):
+        """Ouvre l'objet sélectionné"""
+        current_item = self.results_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Erreur", "Aucun objet sélectionné.")
+            return
+        
+        obj_id = current_item.data(Qt.UserRole)
+        obj = self.db.objects.get(obj_id)
+        if not obj:
+            QMessageBox.warning(self, "Erreur", "Objet introuvable.")
+            return
+        
+        success = obj.open_location()
+        if not success:
+            QMessageBox.warning(self, "Erreur", "Impossible d'ouvrir l'emplacement.")
+    
+    def edit_selected_object(self):
+        """Modifie l'objet sélectionné"""
+        current_item = self.results_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Erreur", "Aucun objet sélectionné.")
+            return
+        
+        obj_id = current_item.data(Qt.UserRole)
+        obj = self.db.objects.get(obj_id)
+        if not obj:
+            QMessageBox.warning(self, "Erreur", "Objet introuvable.")
+            return
+        
+        # Ouvrir la boîte de dialogue d'édition
+        dialog = AddFileDialog(self, self.db, obj)
+        if dialog.exec() == QDialog.Accepted:
+            # L'objet a été modifié, rafraîchir l'affichage
+            self.perform_search()  # Rafraîchir la recherche pour voir les modifications
+            self.show_object_details()
+    
+    def delete_selected_object(self):
+        """Supprime l'objet sélectionné"""
+        current_item = self.results_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Erreur", "Aucun objet sélectionné.")
+            return
+        
+        obj_id = current_item.data(Qt.UserRole)
+        obj = self.db.objects.get(obj_id)
+        if not obj:
+            QMessageBox.warning(self, "Erreur", "Objet introuvable.")
+            return
+        
         reply = QMessageBox.question(
             self,
             "Confirmation",
@@ -2124,102 +1720,352 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.Yes:
             success = self.db.delete_object(obj_id)
             if success:
-                self.load_all_objects()
-                QMessageBox.information(self, "Succès", "Fichier supprimé avec succès.")
+                QMessageBox.information(self, "Succès", "Objet supprimé avec succès.")
+                self.perform_search()  # Rafraîchir la liste
+                self.clear_object_details()
             else:
-                QMessageBox.warning(self, "Erreur", "Impossible de supprimer le fichier.")
+                QMessageBox.warning(self, "Erreur", "Impossible de supprimer l'objet.")
+    
+    def add_file(self):
+        """Ouvre la boîte de dialogue pour ajouter un fichier"""
+        dialog = AddFileDialog(self, self.db)
+        if dialog.exec() == QDialog.Accepted:
+            # Rafraîchir l'affichage
+            self.clear_search()
+    
+    def bulk_import(self):
+        """Importe plusieurs fichiers en une fois"""
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Sélectionner les fichiers à importer",
+            "",
+            "Tous les fichiers (*)"
+        )
+        
+        if not files:
+            return
+        
+        progress = QProgressDialog("Importation en cours...", "Annuler", 0, len(files), self)
+        progress.setWindowModality(Qt.WindowModal)
+        
+        success_count = 0
+        duplicate_count = 0
+        error_count = 0
+        
+        for i, file_path in enumerate(files):
+            progress.setValue(i)
+            if progress.wasCanceled():
+                break
+            
+            try:
+                file_name = os.path.basename(file_path)
+                file_type = self.detect_file_type(file_path)
+                
+                # Vérifier si le fichier existe déjà
+                if self.db.location_exists(file_path):
+                    duplicate_count += 1
+                    continue
+                
+                obj = FileObject(file_name, "", file_type, file_path)
+                obj_id = self.db.add_object(obj)
+                
+                if obj_id:
+                    success_count += 1
+                else:
+                    error_count += 1
+                    
+            except Exception as e:
+                error_count += 1
+                print(f"Erreur lors de l'import de {file_path}: {e}")
+        
+        progress.setValue(len(files))
+        
+        # Afficher le rapport
+        QMessageBox.information(
+            self,
+            "Importation terminée",
+            f"Importation terminée:\n"
+            f"- {success_count} fichiers importés avec succès\n"
+            f"- {duplicate_count} fichiers déjà existants\n"
+            f"- {error_count} erreurs"
+        )
+        
+        # Rafraîchir l'affichage
+        self.clear_search()
+    
+    def detect_file_type(self, file_path: str) -> str:
+        """Détecte le type de fichier basé sur l'extension"""
+        ext = os.path.splitext(file_path)[1].lower()
+        
+        image_exts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']
+        video_exts = ['.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv', '.webm']
+        audio_exts = ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.wma']
+        doc_exts = ['.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt', '.xls', '.xlsx', '.ppt', '.pptx']
+        
+        if ext in image_exts:
+            return "image"
+        elif ext in video_exts:
+            return "video"
+        elif ext in audio_exts:
+            return "audio"
+        elif ext in doc_exts:
+            return "document"
+        else:
+            return "autre"
+    
+    def show_settings(self):
+        """Affiche les paramètres"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Paramètres")
+        dialog.setModal(True)
+        
+        layout = QVBoxLayout(dialog)
+        
+        # Dossier de données
+        data_layout = QHBoxLayout()
+        data_layout.addWidget(QLabel("Dossier de données:"))
+        self.data_dir_input = QLineEdit(self.config.get_data_dir())
+        data_layout.addWidget(self.data_dir_input)
+        
+        browse_button = QPushButton("Parcourir...")
+        browse_button.clicked.connect(self.browse_data_dir)
+        data_layout.addWidget(browse_button)
+        
+        layout.addLayout(data_layout)
+        
+        # Mode sombre
+        dark_mode_checkbox = QCheckBox("Mode sombre")
+        dark_mode_checkbox.setChecked(self.config.get_dark_mode())
+        dark_mode_checkbox.stateChanged.connect(lambda state: self.config.set_dark_mode(state == Qt.Checked))
+        layout.addWidget(dark_mode_checkbox)
+        
+        # Boutons
+        button_layout = QHBoxLayout()
+        cancel_button = QPushButton("Annuler")
+        cancel_button.clicked.connect(dialog.reject)
+        save_button = QPushButton("Sauvegarder")
+        save_button.clicked.connect(lambda: self.save_settings(dialog))
+        
+        button_layout.addWidget(cancel_button)
+        button_layout.addWidget(save_button)
+        layout.addLayout(button_layout)
+        
+        dialog.exec_()
+    
+    def browse_data_dir(self):
+        """Ouvre une boîte de dialogue pour choisir le dossier de données"""
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Sélectionner le dossier de données",
+            self.config.get_data_dir()
+        )
+        
+        if directory:
+            self.data_dir_input.setText(directory)
+    
+    def save_settings(self, dialog):
+        """Sauvegarde les paramètres"""
+        data_dir = self.data_dir_input.text().strip()
+        if data_dir:
+            self.config.set_data_dir(data_dir)
+            dialog.accept()
+            
+            # Recharger la base de données avec le nouveau dossier
+            self.load_database()
+            self.clear_search()
     
     def show_about(self):
         """Affiche la boîte de dialogue À propos"""
-        data_dir = self.config.get_data_dir() if self.db else "Non spécifié"
-        QMessageBox.about(self, "À propos", 
-                         f"Gestionnaire de Fichiers par Tags\n\n"
-                         f"Cette application permet de gérer vos fichiers à l'aide de tags.\n"
-                         f"Vous pouvez rechercher des fichiers par nom ou par tags en utilisant "
-                         f"une syntaxe avancée (AND, OR, NOT).\n\n"
-                         f"Dossier de données actuel: {data_dir}\n\n"
-                         f"Les emplacements peuvent être:\n"
-                         f"- Internes: chemins vers des fichiers locaux\n"
-                         f"- Externes: URLs web (http://, https://)\n\n"
-                         f"Nouveau: Prévisualisation des images et modification des éléments!")
+        QMessageBox.about(
+            self,
+            "À propos",
+            "Gestionnaire de Fichiers avec Tags\n\n"
+            "Une application pour organiser et rechercher vos fichiers avec des tags.\n\n"
+            "Fonctionnalités:\n"
+            "- Ajout et gestion de fichiers avec tags\n"
+            "- Recherche avancée avec syntaxe booléenne\n"
+            "- Gestion des collections d'objets\n"
+            "- Interface intuitive avec mode sombre\n"
+            "- Support des fichiers locaux et URLs web"
+        )
 
-def test_boolean_search():
-    """Tests pour la recherche booléenne"""
-    # Créer une base de test
-    import tempfile
-    import shutil
+class AddFileDialog(QDialog):
+    def __init__(self, parent=None, db=None, edit_object=None):
+        super().__init__(parent)
+        self.db = db
+        self.edit_object = edit_object
+        
+        if edit_object:
+            self.setWindowTitle("Modifier le fichier")
+            self.is_edit = True
+        else:
+            self.setWindowTitle("Ajouter un fichier")
+            self.is_edit = False
+            
+        self.setModal(True)
+        self.init_ui()
     
-    temp_dir = tempfile.mkdtemp()
-    db = TagDatabase(temp_dir)
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Nom
+        name_layout = QHBoxLayout()
+        name_layout.addWidget(QLabel("Nom:"))
+        self.name_input = QLineEdit()
+        name_layout.addWidget(self.name_input)
+        layout.addLayout(name_layout)
+        
+        # Type
+        type_layout = QHBoxLayout()
+        type_layout.addWidget(QLabel("Type:"))
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["image", "video", "audio", "document", "autre"])
+        type_layout.addWidget(self.type_combo)
+        layout.addLayout(type_layout)
+        
+        # Emplacement
+        location_layout = QHBoxLayout()
+        location_layout.addWidget(QLabel("Emplacement:"))
+        self.location_input = QLineEdit()
+        location_layout.addWidget(self.location_input)
+        
+        browse_button = QPushButton("Parcourir...")
+        browse_button.clicked.connect(self.browse_file)
+        location_layout.addWidget(browse_button)
+        
+        layout.addLayout(location_layout)
+        
+        # Description
+        desc_layout = QVBoxLayout()
+        desc_layout.addWidget(QLabel("Description:"))
+        self.desc_input = QTextEdit()
+        self.desc_input.setMaximumHeight(100)
+        desc_layout.addWidget(self.desc_input)
+        layout.addLayout(desc_layout)
+        
+        # Tags initiaux
+        tags_layout = QHBoxLayout()
+        tags_layout.addWidget(QLabel("Tags (séparés par des virgules):"))
+        self.tags_input = QLineEdit()
+        self.tags_input.setPlaceholderText("tag1, tag2, tag3...")
+        tags_layout.addWidget(self.tags_input)
+        layout.addLayout(tags_layout)
+        
+        # Remplir les champs si on est en mode édition
+        if self.is_edit and self.edit_object:
+            self.name_input.setText(self.edit_object.name)
+            self.type_combo.setCurrentText(self.edit_object.file_type)
+            self.location_input.setText(self.edit_object.location)
+            self.desc_input.setPlainText(self.edit_object.description)
+            
+            # Charger les tags existants
+            tags = self.db.get_object_tags(self.edit_object.id)
+            self.tags_input.setText(", ".join(tags))
+        
+        # Boutons
+        button_layout = QHBoxLayout()
+        cancel_button = QPushButton("Annuler")
+        cancel_button.clicked.connect(self.reject)
+        save_button = QPushButton("Sauvegarder")
+        save_button.clicked.connect(self.save_file)
+        
+        button_layout.addWidget(cancel_button)
+        button_layout.addWidget(save_button)
+        layout.addLayout(button_layout)
     
-    try:
-        # Créer des objets de test
-        obj1 = FileObject("chat.jpg", "Photo de chat", "image", "/tmp/chat.jpg")
-        obj2 = FileObject("chien.jpg", "Photo de chien", "image", "/tmp/chien.jpg")
-        obj3 = FileObject("chat et chien.jpg", "Photo groupe", "image", "/tmp/chat_chien.jpg")
+    def browse_file(self):
+        """Ouvre une boîte de dialogue pour choisir un fichier"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Sélectionner un fichier",
+            "",
+            "Tous les fichiers (*)"
+        )
         
-        db.add_object(obj1)
-        db.add_object(obj2)
-        db.add_object(obj3)
+        if file_path:
+            self.location_input.setText(file_path)
+            # Déduire le nom du fichier si le champ nom est vide
+            if not self.name_input.text().strip():
+                file_name = os.path.basename(file_path)
+                self.name_input.setText(file_name)
+    
+    def save_file(self):
+        """Sauvegarde le fichier"""
+        name = self.name_input.text().strip()
+        file_type = self.type_combo.currentText()
+        location = self.location_input.text().strip()
+        description = self.desc_input.toPlainText().strip()
+        tags = [tag.strip() for tag in self.tags_input.text().split(',') if tag.strip()]
         
-        # Ajouter des tags
-        db.add_tag(obj1.id, "animal")
-        db.add_tag(obj2.id, "animal")
-        db.add_tag(obj3.id, "groupe")
-        db.add_tag(obj3.id, "animal")
+        # Validation
+        if not name:
+            QMessageBox.warning(self, "Erreur", "Veuillez entrer un nom.")
+            return
         
-        print("Testing boolean search...")
+        if not location:
+            QMessageBox.warning(self, "Erreur", "Veuillez entrer un emplacement.")
+            return
         
-        # Tests de recherche
-        result = db.advanced_search("chat")
-        print(f"chat: {len(result)} résultats")
-        assert len(result) == 2, f"Expected 2, got {len(result)}"
+        if self.is_edit:
+            # Mode édition
+            success = self.db.update_object(
+                self.edit_object.id, name, description, file_type, location
+            )
+            
+            if not success:
+                QMessageBox.warning(self, "Erreur", "Cet emplacement est déjà utilisé par un autre objet.")
+                return
+            
+            # Mettre à jour les tags
+            current_tags = set(self.db.get_object_tags(self.edit_object.id))
+            new_tags = set(tags)
+            
+            # Ajouter les nouveaux tags
+            for tag in new_tags - current_tags:
+                self.db.add_tag(self.edit_object.id, tag)
+            
+            # Supprimer les tags retirés
+            for tag in current_tags - new_tags:
+                self.db.remove_tag(self.edit_object.id, tag)
+            
+            QMessageBox.information(self, "Succès", "Fichier modifié avec succès.")
+            
+        else:
+            # Mode ajout
+            # Vérifier si l'emplacement existe déjà
+            if self.db.location_exists(location):
+                QMessageBox.warning(self, "Erreur", "Cet emplacement est déjà utilisé.")
+                return
+            
+            obj = FileObject(name, description, file_type, location)
+            obj_id = self.db.add_object(obj)
+            
+            if obj_id:
+                # Ajouter les tags
+                for tag in tags:
+                    self.db.add_tag(obj_id, tag)
+                
+                QMessageBox.information(self, "Succès", "Fichier ajouté avec succès.")
+            else:
+                QMessageBox.warning(self, "Erreur", "Erreur lors de l'ajout du fichier.")
+                return
         
-        result = db.advanced_search("chien")
-        print(f"chien: {len(result)} résultats")
-        assert len(result) == 2, f"Expected 2, got {len(result)}"
-        
-        result = db.advanced_search("chat AND chien")
-        print(f"chat AND chien: {len(result)} résultats")
-        assert len(result) == 1, f"Expected 1, got {len(result)}"
-        
-        result = db.advanced_search("chat OR chien")
-        print(f"chat OR chien: {len(result)} résultats")
-        assert len(result) == 3, f"Expected 3, got {len(result)}"
-        
-        # Test NOT avec espaces
-        result = db.advanced_search("chat NOT chien")
-        print(f"chat NOT chien: {len(result)} résultats")
-        assert len(result) == 1, f"Expected 1, got {len(result)}"
-        
-        # Test avec tags
-        result = db.advanced_search("#animal")
-        print(f"#animal: {len(result)} résultats")
-        assert len(result) == 3, f"Expected 3, got {len(result)}"
-        
-        result = db.advanced_search("#animal AND #groupe")
-        print(f"#animal AND #groupe: {len(result)} résultats")
-        assert len(result) == 1, f"Expected 1, got {len(result)}"
-        
-        result = db.advanced_search("(chat OR chien) AND #groupe")
-        print(f"(chat OR chien) AND #groupe: {len(result)} résultats")
-        assert len(result) == 1, f"Expected 1, got {len(result)}"
-        
-        print("✓ Tous les tests de recherche booléenne ont réussi")
-        
-    except Exception as e:
-        print(f"✗ Erreur dans les tests: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        shutil.rmtree(temp_dir)
+        self.accept()
 
-if __name__ == "__main__":
-    # Lancer les tests au démarrage
-    test_boolean_search()
+def main():
+    app = QApplication([])
     
-    import sys
-    app = QApplication(sys.argv)
+    # Vérifier le premier démarrage
+    config = Config()
+    if config.is_first_run():
+        # Créer le dossier de données par défaut
+        data_dir = config.get_data_dir()
+        os.makedirs(data_dir, exist_ok=True)
+        config.set_first_run_complete()
+    
     window = MainWindow()
     window.show()
-    sys.exit(app.exec_())
+    app.exec_()
+
+if __name__ == "__main__":
+    main()
