@@ -2399,8 +2399,10 @@ QScrollBar::handle:vertical:hover {
             # Rafraîchir l'affichage
             self.clear_search()
     
+    # Dans la classe MainWindow, modifier la méthode bulk_import
+
     def bulk_import(self):
-        """Importe plusieurs fichiers en une fois"""
+        """Importe plusieurs fichiers en une fois avec détection de doublons"""
         files, _ = QFileDialog.getOpenFileNames(
             self,
             "Sélectionner les fichiers à importer",
@@ -2411,6 +2413,25 @@ QScrollBar::handle:vertical:hover {
         if not files:
             return
         
+        # Détecter les doublons parmi les fichiers sélectionnés
+        duplicate_finder = DuplicateFinder()
+        duplicates = duplicate_finder.find_duplicates_from_list(files)
+        
+        # Si des doublons sont trouvés, demander confirmation
+        if duplicates:
+            duplicate_count = sum(len(group) - 1 for group in duplicates)
+            reply = QMessageBox.question(
+                self,
+                "Doublons détectés",
+                f"{len(duplicates)} groupe(s) de doublons détectés ({duplicate_count} fichier(s) en double).\n"
+                "Voulez-vous continuer l'import en ignorant les doublons ?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply != QMessageBox.Yes:
+                return
+        
         progress = QProgressDialog("Importation en cours...", "Annuler", 0, len(files), self)
         progress.setWindowModality(Qt.WindowModal)
         
@@ -2418,16 +2439,27 @@ QScrollBar::handle:vertical:hover {
         duplicate_count = 0
         error_count = 0
         
+        # Créer une liste des fichiers à ignorer (doublons dans la sélection)
+        files_to_skip = set()
+        for duplicate_group in duplicates:
+            # Garder seulement le premier fichier de chaque groupe de doublons
+            files_to_skip.update(duplicate_group[1:])
+        
         for i, file_path in enumerate(files):
             progress.setValue(i)
             if progress.wasCanceled():
                 break
             
+            # Ignorer les fichiers marqués comme doublons
+            if file_path in files_to_skip:
+                duplicate_count += 1
+                continue
+            
             try:
                 file_name = os.path.basename(file_path)
                 file_type = self.detect_file_type(file_path)
                 
-                # Vérifier si le fichier existe déjà
+                # Vérifier si le fichier existe déjà dans la base de données
                 if self.db.location_exists(file_path):
                     duplicate_count += 1
                     continue
@@ -2446,14 +2478,28 @@ QScrollBar::handle:vertical:hover {
         
         progress.setValue(len(files))
         
-        # Afficher le rapport
+        # Afficher le rapport détaillé
+        report_message = (
+            f"Importation terminée:\n"
+            f"- {success_count} fichiers importés avec succès\n"
+            f"- {duplicate_count} fichiers ignorés (doublons)\n"
+            f"- {error_count} erreurs"
+        )
+        
+        # Ajouter des détails sur les doublons si nécessaire
+        if duplicates:
+            duplicate_details = "\n\nDétails des doublons détectés:"
+            for i, group in enumerate(duplicates, 1):
+                duplicate_details += f"\nGroupe {i}:"
+                for file_path in group:
+                    duplicate_details += f"\n  - {os.path.basename(file_path)}"
+            
+            report_message += duplicate_details
+        
         QMessageBox.information(
             self,
             "Importation terminée",
-            f"Importation terminée:\n"
-            f"- {success_count} fichiers importés avec succès\n"
-            f"- {duplicate_count} fichiers déjà existants\n"
-            f"- {error_count} erreurs"
+            report_message
         )
         
         # Rafraîchir l'affichage
