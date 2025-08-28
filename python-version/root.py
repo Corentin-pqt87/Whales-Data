@@ -1,18 +1,21 @@
-import os
+import sys
 import json
 import uuid
 import re
 import datetime
-from collections import deque
+from collections import deque, defaultdict  # Ajouter defaultdict
 from typing import List, Dict, Set, Optional, Union
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLineEdit, QPushButton, QListWidget, QListWidgetItem, QLabel, 
                              QTextEdit, QComboBox, QFileDialog, QMessageBox, QSplitter,
                              QTreeWidget, QTreeWidgetItem, QTabWidget, QGroupBox, QDialog,
                              QMenu, QAction, QCompleter, QInputDialog, QProgressDialog,
-                             QCheckBox)
+                             QCheckBox, QRadioButton)
 from PyQt5.QtCore import Qt, QUrl, QSettings, QStringListModel
 from PyQt5.QtGui import QIcon, QFont, QDesktopServices, QPixmap, QPalette, QColor
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), 'Function'))
+from Function.tirage import DuplicateFinder, get_partial_hash, get_full_hash
 
 class Config:
     """Classe de configuration pour gérer les préférences"""
@@ -126,6 +129,335 @@ class SearchHistory:
                     self.history = deque(history_data, maxlen=self.max_history)
         except Exception as e:
             print(f"Erreur lors du chargement de l'historique: {e}")
+
+class DuplicatesDialog(QDialog):
+    """Boîte de dialogue pour détecter les doublons"""
+    def __init__(self, parent=None, db=None):
+        super().__init__(parent)
+        self.db = db
+        self.setWindowTitle("Détection de doublons")
+        self.setModal(True)
+        self.setMinimumSize(600, 500)
+        self.duplicate_finder = DuplicateFinder()
+        self.init_ui()
+    
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Sélection du scope
+        scope_group = QGroupBox("Portée de l'analyse")
+        scope_layout = QVBoxLayout(scope_group)
+        
+        self.all_files_radio = QRadioButton("Tous les fichiers")
+        self.all_files_radio.setChecked(True)
+        self.all_files_radio.toggled.connect(self.update_scope)
+        scope_layout.addWidget(self.all_files_radio)
+        
+        self.by_tag_radio = QRadioButton("Par tag")
+        self.by_tag_radio.toggled.connect(self.update_scope)
+        scope_layout.addWidget(self.by_tag_radio)
+        
+        self.tag_combo = QComboBox()
+        self.tag_combo.setEnabled(False)
+        scope_layout.addWidget(self.tag_combo)
+        
+        self.by_collection_radio = QRadioButton("Par collection")
+        self.by_collection_radio.toggled.connect(self.update_scope)
+        scope_layout.addWidget(self.by_collection_radio)
+        
+        self.collection_combo = QComboBox()
+        self.collection_combo.setEnabled(False)
+        scope_layout.addWidget(self.collection_combo)
+        
+        layout.addWidget(scope_group)
+        
+        # Options
+        options_group = QGroupBox("Options")
+        options_layout = QVBoxLayout(options_group)
+        
+        self.deep_scan_checkbox = QCheckBox("Analyse approfondie (plus lente mais plus précise)")
+        self.deep_scan_checkbox.setChecked(True)
+        options_layout.addWidget(self.deep_scan_checkbox)
+        
+        layout.addWidget(options_group)
+        
+        # Boutons d'action
+        action_layout = QHBoxLayout()
+        self.scan_button = QPushButton("Lancer l'analyse")
+        self.scan_button.clicked.connect(self.start_scan)
+        self.clean_button = QPushButton("Nettoyer les doublons")
+        self.clean_button.clicked.connect(self.clean_duplicates)
+        self.clean_button.setEnabled(False)
+        
+        action_layout.addWidget(self.scan_button)
+        action_layout.addWidget(self.clean_button)
+        layout.addLayout(action_layout)
+        
+        # Résultats
+        results_group = QGroupBox("Résultats")
+        results_layout = QVBoxLayout(results_group)
+        
+        self.results_list = QTreeWidget()
+        self.results_list.setHeaderLabels(["Fichier", "Taille", "Emplacement"])
+        self.results_list.setSelectionMode(QTreeWidget.ExtendedSelection)
+        results_layout.addWidget(self.results_list)
+        
+        self.status_label = QLabel("Prêt à analyser")
+        results_layout.addWidget(self.status_label)
+        
+        layout.addWidget(results_group)
+        
+        # Bouton de fermeture
+        close_button = QPushButton("Fermer")
+        close_button.clicked.connect(self.accept)
+        layout.addWidget(close_button)
+        
+        # Charger les tags et collections
+        self.load_tags_and_collections()
+    
+    def load_tags_and_collections(self):
+        """Charge les tags et collections disponibles"""
+        if not self.db:
+            return
+        
+        # Charger les tags
+        self.tag_combo.clear()
+        for tag in sorted(self.db.tags.keys()):
+            self.tag_combo.addItem(tag)
+        
+        # Charger les collections
+        self.collection_combo.clear()
+        for collection in self.db.collections.values():
+            self.collection_combo.addItem(collection.name, collection.id)
+    
+    def update_scope(self):
+        """Met à jour l'état des combobox selon la sélection"""
+        self.tag_combo.setEnabled(self.by_tag_radio.isChecked())
+        self.collection_combo.setEnabled(self.by_collection_radio.isChecked())
+    
+    def get_files_to_scan(self):
+        """Retourne la liste des fichiers à analyser selon le scope sélectionné"""
+        files_to_scan = []
+        
+        if self.by_tag_radio.isChecked():
+            # Récupérer les fichiers avec le tag sélectionné
+            tag = self.tag_combo.currentText()
+            objects = self.db.search_by_tag(tag)
+            for obj in objects:
+                if not obj.is_external():  # Ignorer les URLs externes
+                    files_to_scan.append(obj.location)
+        
+        elif self.by_collection_radio.isChecked():
+            # Récupérer les fichiers de la collection sélectionnée
+            collection_id = self.collection_combo.currentData()
+            collection = self.db.collections.get(collection_id)
+            if collection:
+                for obj_id in collection.object_ids:
+                    obj = self.db.objects.get(obj_id)
+                    if obj and not obj.is_external():  # Ignorer les URLs externes
+                        files_to_scan.append(obj.location)
+        
+        else:
+            # Tous les fichiers locaux
+            for obj in self.db.objects.values():
+                if not obj.is_external():  # Ignorer les URLs externes
+                    files_to_scan.append(obj.location)
+        
+        return files_to_scan
+    
+    def start_scan(self):
+        """Lance l'analyse des doublons"""
+        files_to_scan = self.get_files_to_scan()
+        
+        if not files_to_scan:
+            QMessageBox.warning(self, "Erreur", "Aucun fichier à analyser.")
+            return
+        
+        # Vérifier que les fichiers existent
+        existing_files = []
+        missing_files = []
+        
+        for file_path in files_to_scan:
+            if os.path.exists(file_path):
+                existing_files.append(file_path)
+            else:
+                missing_files.append(file_path)
+        
+        if missing_files:
+            QMessageBox.warning(
+                self, 
+                "Fichiers manquants", 
+                f"{len(missing_files)} fichier(s) n'existe(nt) plus.\n"
+                f"Exemple: {missing_files[0] if missing_files else ''}"
+            )
+        
+        if not existing_files:
+            QMessageBox.warning(self, "Erreur", "Aucun fichier valide à analyser.")
+            return
+        
+        # Démarrer l'analyse
+        self.status_label.setText(f"Analyse de {len(existing_files)} fichiers...")
+        QApplication.processEvents()  # Mettre à jour l'interface
+        
+        try:
+            # Utiliser une approche différente selon l'option choisie
+            if self.deep_scan_checkbox.isChecked():
+                # Analyse complète avec hachage
+                self.duplicates = self.find_duplicates_by_hash(existing_files)
+            else:
+                # Analyse rapide par taille seulement
+                self.duplicates = self.find_duplicates_by_size(existing_files)
+            
+            self.display_results()
+            self.clean_button.setEnabled(len(self.duplicates) > 0)
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Erreur lors de l'analyse: {e}")
+            self.status_label.setText("Erreur lors de l'analyse")
+    
+    def find_duplicates_by_size(self, file_paths):
+        """Trouve les doublons par taille seulement (rapide mais moins précis)"""
+        size_groups = defaultdict(list)
+        
+        for file_path in file_paths:
+            try:
+                size = os.path.getsize(file_path)
+                size_groups[size].append(file_path)
+            except OSError:
+                continue  # Ignorer les fichiers inaccessibles
+        
+        # Retourner seulement les groupes avec plus d'un fichier
+        return [files for files in size_groups.values() if len(files) > 1]
+    
+    def find_duplicates_by_hash(self, file_paths):
+        """Trouve les doublons par hachage (plus lent mais plus précis)"""
+        # Utiliser la nouvelle méthode find_duplicates_from_list
+        finder = DuplicateFinder()
+        return finder.find_duplicates_from_list(file_paths)
+    
+    def are_files_identical(self, file1, file2):
+        """Vérifie si deux fichiers sont identiques par hachage"""
+        try:
+            return get_full_hash(file1) == get_full_hash(file2)
+        except:
+            return False
+    
+    def display_results(self):
+        """Affiche les résultats dans l'arbre"""
+        self.results_list.clear()
+        
+        total_duplicates = sum(len(group) - 1 for group in self.duplicates)
+        total_groups = len(self.duplicates)
+        
+        self.status_label.setText(
+            f"{total_groups} groupe(s) de doublons trouvés, "
+            f"{total_duplicates} fichier(s) en double au total"
+        )
+        
+        for i, duplicate_group in enumerate(self.duplicates):
+            group_item = QTreeWidgetItem(self.results_list)
+            group_item.setText(0, f"Groupe {i+1} ({len(duplicate_group)} fichiers)")
+            group_item.setData(0, Qt.UserRole, duplicate_group)
+            
+            # Trier par taille pour afficher le plus grand en premier
+            duplicate_group.sort(key=lambda x: os.path.getsize(x), reverse=True)
+            
+            for file_path in duplicate_group:
+                try:
+                    size = os.path.getsize(file_path)
+                    size_str = self.format_file_size(size)
+                    
+                    file_item = QTreeWidgetItem(group_item)
+                    file_item.setText(0, os.path.basename(file_path))
+                    file_item.setText(1, size_str)
+                    file_item.setText(2, file_path)
+                    file_item.setData(0, Qt.UserRole, file_path)
+                    
+                    # Marquer tous sauf le premier comme à supprimer
+                    if file_path != duplicate_group[0]:
+                        file_item.setCheckState(0, Qt.Checked)
+                    else:
+                        file_item.setCheckState(0, Qt.Unchecked)
+                    
+                except OSError:
+                    continue  # Ignorer les fichiers inaccessibles
+            
+            group_item.setExpanded(True)
+    
+    def format_file_size(self, size_bytes):
+        """Formate la taille du fichier en unités lisible"""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.1f} PB"
+    
+    def clean_duplicates(self):
+        """Supprime les fichiers sélectionnés"""
+        # Récupérer tous les fichiers cochés
+        files_to_delete = []
+        
+        for i in range(self.results_list.topLevelItemCount()):
+            group_item = self.results_list.topLevelItem(i)
+            for j in range(group_item.childCount()):
+                file_item = group_item.child(j)
+                if file_item.checkState(0) == Qt.Checked:
+                    file_path = file_item.data(0, Qt.UserRole)
+                    files_to_delete.append(file_path)
+        
+        if not files_to_delete:
+            QMessageBox.information(self, "Information", "Aucun fichier sélectionné pour suppression.")
+            return
+        
+        # Demander confirmation
+        reply = QMessageBox.question(
+            self,
+            "Confirmation",
+            f"Êtes-vous sûr de vouloir supprimer {len(files_to_delete)} fichier(s) ?\n"
+            "Cette action est irréversible.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
+        # Supprimer les fichiers et mettre à jour la base de données
+        deleted_count = 0
+        error_count = 0
+        
+        for file_path in files_to_delete:
+            try:
+                # Supprimer le fichier
+                os.remove(file_path)
+                
+                # Trouver et supprimer l'objet correspondant dans la base
+                obj = self.db.get_object_by_location(file_path)
+                if obj:
+                    self.db.delete_object(obj.id)
+                
+                deleted_count += 1
+                
+            except Exception as e:
+                error_count += 1
+                print(f"Erreur lors de la suppression de {file_path}: {e}")
+        
+        # Afficher le résultat
+        if error_count == 0:
+            QMessageBox.information(
+                self, 
+                "Succès", 
+                f"{deleted_count} fichier(s) supprimé(s) avec succès."
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "Résultat partiel",
+                f"{deleted_count} fichier(s) supprimé(s), {error_count} erreur(s)."
+            )
+        
+        # Relancer l'analyse pour mettre à jour les résultats
+        self.start_scan()
 
 class FileObject:
     def __init__(self, name: str, description: str, file_type: str, location: str):
@@ -1220,6 +1552,13 @@ class MainWindow(QMainWindow):
         exit_action = QAction("Quitter", self)
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
+
+        # Menu Édition (NOUVEAU)
+        edit_menu = menu_bar.addMenu("Édition")
+
+        detect_duplicates_action = QAction("Détecter les doublons", self)
+        detect_duplicates_action.triggered.connect(self.detect_duplicates)
+        edit_menu.addAction(detect_duplicates_action)
         
         # Menu Données (NOUVEAU)
         data_menu = menu_bar.addMenu("Données")
@@ -1247,6 +1586,11 @@ class MainWindow(QMainWindow):
         about_action = QAction("À propos", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+
+    def detect_duplicates(self):
+        """Ouvre la boîte de dialogue de détection de doublons"""
+        dialog = DuplicatesDialog(self, self.db)
+        dialog.exec_()
 
     def manage_tags(self):
         """Ouvre la boîte de dialogue de gestion des tags"""
