@@ -2403,15 +2403,72 @@ QScrollBar::handle:vertical:hover {
 
     def bulk_import(self):
         """Importe plusieurs fichiers en une fois avec détection de doublons"""
-        files, _ = QFileDialog.getOpenFileNames(
+        # Sélectionner un dossier au lieu de fichiers individuels
+        directory = QFileDialog.getExistingDirectory(
             self,
-            "Sélectionner les fichiers à importer",
-            "",
-            "Tous les fichiers (*)"
+            "Sélectionner le dossier à importer",
+            ""
         )
         
-        if not files:
+        if not directory:
             return
+        
+        # Récupérer tous les fichiers du dossier
+        files = []
+        for root, _, filenames in os.walk(directory):
+            for filename in filenames:
+                file_path = os.path.join(root, filename)
+                files.append(file_path)
+        
+        if not files:
+            QMessageBox.information(self, "Information", "Aucun fichier trouvé dans le dossier sélectionné.")
+            return
+        
+        # Demander à l'utilisateur de choisir un tag et une collection
+        tag_dialog = QDialog(self)
+        tag_dialog.setWindowTitle("Options d'import")
+        tag_dialog.setModal(True)
+        
+        layout = QVBoxLayout(tag_dialog)
+        
+        # Sélection du tag
+        tag_layout = QHBoxLayout()
+        tag_layout.addWidget(QLabel("Tag à appliquer:"))
+        tag_input = QLineEdit()
+        tag_input.setPlaceholderText("Optionnel - laisser vide pour aucun tag")
+        tag_layout.addWidget(tag_input)
+        layout.addLayout(tag_layout)
+        
+        # Sélection de la collection
+        collection_layout = QHBoxLayout()
+        collection_layout.addWidget(QLabel("Collection:"))
+        collection_combo = QComboBox()
+        collection_combo.addItem("Aucune", None)
+        
+        # Ajouter les collections disponibles
+        for collection in self.db.collections.values():
+            collection_combo.addItem(collection.name, collection.id)
+        
+        collection_layout.addWidget(collection_combo)
+        layout.addLayout(collection_layout)
+        
+        # Boutons
+        button_layout = QHBoxLayout()
+        cancel_button = QPushButton("Annuler")
+        cancel_button.clicked.connect(tag_dialog.reject)
+        import_button = QPushButton("Importer")
+        import_button.clicked.connect(tag_dialog.accept)
+        
+        button_layout.addWidget(cancel_button)
+        button_layout.addWidget(import_button)
+        layout.addLayout(button_layout)
+        
+        if tag_dialog.exec() != QDialog.Accepted:
+            return
+        
+        # Récupérer les choix de l'utilisateur
+        selected_tag = tag_input.text().strip()
+        selected_collection_id = collection_combo.currentData()
         
         # Détecter les doublons parmi les fichiers sélectionnés
         duplicate_finder = DuplicateFinder()
@@ -2468,6 +2525,14 @@ QScrollBar::handle:vertical:hover {
                 obj_id = self.db.add_object(obj)
                 
                 if obj_id:
+                    # Ajouter le tag si spécifié
+                    if selected_tag:
+                        self.db.add_tag(obj_id, selected_tag)
+                    
+                    # Ajouter à la collection si spécifiée
+                    if selected_collection_id:
+                        self.db.add_object_to_collection(obj_id, selected_collection_id)
+                    
                     success_count += 1
                 else:
                     error_count += 1
@@ -2485,6 +2550,14 @@ QScrollBar::handle:vertical:hover {
             f"- {duplicate_count} fichiers ignorés (doublons)\n"
             f"- {error_count} erreurs"
         )
+        
+        # Ajouter des informations sur les tags/collections appliqués
+        if selected_tag:
+            report_message += f"\n- Tag appliqué: #{selected_tag}"
+        
+        if selected_collection_id:
+            collection_name = collection_combo.currentText()
+            report_message += f"\n- Collection: {collection_name}"
         
         # Ajouter des détails sur les doublons si nécessaire
         if duplicates:
